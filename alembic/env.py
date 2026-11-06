@@ -14,6 +14,11 @@ config = context.config
 target_metadata = Base.metadata
 
 
+def include_object(obj, name, type_, reflected, compare_to):  # type: ignore[no-untyped-def]
+    # APScheduler o'z jadvalini o'zi boshqaradi
+    return not (type_ == "table" and name == "apscheduler_jobs")
+
+
 def _url() -> str:
     url = config.get_main_option("sqlalchemy.url")
     if url:
@@ -24,13 +29,19 @@ def _url() -> str:
 
 
 def run_migrations_offline() -> None:
-    context.configure(url=_url(), target_metadata=target_metadata, literal_binds=True, render_as_batch=True)
+    context.configure(url=_url(), target_metadata=target_metadata, literal_binds=True, render_as_batch=True,
+                      include_object=include_object)
     with context.begin_transaction():
         context.run_migrations()
 
 
 def _do_run(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        render_as_batch=True,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

@@ -32,3 +32,32 @@ def day_bounds(dt: datetime, name: str = DEFAULT_TZ) -> tuple[datetime, datetime
     start = datetime.combine(local.date(), time(0, 0), tzinfo=ZoneInfo(name))
     end = start + timedelta(days=1)
     return start.astimezone(UTC), end.astimezone(UTC)
+
+
+def parse_hhmm(value: str) -> time:
+    hh, mm = value.strip().split(":")
+    return time(int(hh), int(mm))
+
+
+def in_quiet_hours(
+    dt: datetime, start: time = time(23, 0), end: time = time(7, 0), name: str = DEFAULT_TZ
+) -> bool:
+    t = to_tz(dt, name).time()
+    if start <= end:
+        return start <= t < end
+    return t >= start or t < end
+
+
+def shift_out_of_quiet(
+    dt: datetime,
+    start: time = time(23, 0),
+    end: time = time(7, 0),
+    resume: time = time(7, 30),
+    name: str = DEFAULT_TZ,
+) -> datetime:
+    """Jim soatlarga tushgan vaqtni keyingi `resume` vaqtiga suradi (Toshkent vaqtida qaytaradi)."""
+    if not in_quiet_hours(dt, start, end, name):
+        return dt
+    local = to_tz(dt, name)
+    day = local.date() if local.time() < end else local.date() + timedelta(days=1)
+    return datetime.combine(day, resume, tzinfo=ZoneInfo(name))

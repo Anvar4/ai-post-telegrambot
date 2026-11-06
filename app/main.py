@@ -79,6 +79,9 @@ async def build_context(settings: Settings) -> tuple[AppContext, Bot, Any]:
     )
     ctx.services["config_problems"] = clients.problems
     register_services(ctx)
+    from app.collectors.seed import seed_sources
+
+    await seed_sources(repo)
     return ctx, bot, engine
 
 
@@ -123,7 +126,7 @@ async def run() -> None:
     try:
         from app.scheduler.setup import setup_scheduler
 
-        scheduler = setup_scheduler(ctx)
+        scheduler = await setup_scheduler(ctx)
         scheduler.start()
     except ImportError:
         logger.warning("Scheduler moduli topilmadi — faqat bot rejimi")

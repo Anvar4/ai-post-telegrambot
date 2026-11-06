@@ -125,3 +125,20 @@ def test_migrations_create_all_tables(tmp_path: Path) -> None:
     }
     assert expected <= names
     assert create_engine is not None
+
+
+def test_migrations_match_models(tmp_path: Path) -> None:
+    """Alembic migratsiyalari modellar bilan bir xil sxema yaratadi (yangi maydon unutilmasin)."""
+    import sqlalchemy as sa
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    from app.db.models import Base
+
+    url = f"sqlite+aiosqlite:///{(tmp_path / 'm2.db').as_posix()}"
+    run_migrations(url)
+    sync = sa.create_engine(url.replace("+aiosqlite", ""))
+    with sync.connect() as conn:
+        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+    sync.dispose()
+    assert diff == [], f"Migratsiya modellardan farq qiladi: {diff}"

@@ -65,6 +65,7 @@ class Source(Base):
     last_ok_at: Mapped[datetime | None] = mapped_column(nullable=True)
     fail_count: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_disabled_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
