@@ -61,9 +61,8 @@ async def main() -> int:
     if s.llm_main_provider and main_key:
         try:
             models = await list_models(s.llm_main_provider, main_key, s.llm_main_base_url)
-            print(
-                f"OK   1-kalit ({s.llm_main_provider}) ishlaydi. Mavjud modellar: {', '.join(sorted(models)[:25])}"
-            )
+            listed = ", ".join(sorted(models)[:25])
+            print(f"OK   1-kalit ({s.llm_main_provider}) ishlaydi. Mavjud modellar: {listed}")
             if s.llm_main_model and s.llm_main_model not in models:
                 exit_code = 1
                 print(f"YOʻQ LLM_MAIN_MODEL='{s.llm_main_model}' roʻyxatda topilmadi")
