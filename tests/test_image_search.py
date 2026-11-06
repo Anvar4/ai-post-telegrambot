@@ -342,3 +342,38 @@ async def test_ai_image_double_click_generates_once(ctx) -> None:
         again = await pipeline.use_ai_image(pid)  # ikkinchi bosish — pul ikki marta sarflanmaydi
     assert len(img.prompts) == 1
     assert "allaqachon" in again
+
+
+@respx.mock
+async def test_ai_image_failure_restores_choice(ctx) -> None:
+    empty_search()
+    async with httpx.AsyncClient() as http:
+        pid, _img = await missing_image_post(ctx, http)
+
+        async def boom(*args, **kwargs):
+            raise OSError("disk full")
+
+        ctx.services["images"].make_for_post = boom
+        result = await ctx.services["pipeline"].use_ai_image(pid)
+    assert "❌" in result
+    post = await ctx.repo.get_post(pid)
+    assert post.status == PostStatus.PENDING_APPROVAL
+    assert post.extra["image_status"] == "missing"  # admin qayta urina oladi
+
+
+@respx.mock
+async def test_cover_render_failure_counts_as_missing(ctx, monkeypatch) -> None:
+    await ctx.runtime.set("image_review", False)
+    respx.get(PEXELS).mock(return_value=httpx.Response(200, json=pexels_payload((11, "Jane"))))
+    respx.get("https://images.pexels.com/photos/11/a.jpeg").mock(
+        return_value=httpx.Response(200, content=jpeg())
+    )
+
+    def broken(*args, **kwargs):
+        raise ValueError("font yoʻq")
+
+    monkeypatch.setattr("app.pipeline.image.render_cover", broken)
+    pid = await add_post(ctx)
+    async with httpx.AsyncClient() as http:
+        assert await ImageStage(ctx, search=ImageSearch(http, pexels_key="k")).make_for_post(pid) is None
+    assert (await ctx.repo.get_post(pid)).extra["image_status"] == "missing"  # admin soʻraladi

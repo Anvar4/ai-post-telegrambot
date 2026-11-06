@@ -99,14 +99,12 @@ class ImageStage:
         found = None
         if self.search is not None and query:
             found = await self.search.find(query, exclude=seen, accept=accept)
-        if found is None:
+        cover = await self._cover(found.data, post) if found is not None else None
+        if found is None or cover is None:
             if post.image_path and extra.get("image_status") in ("found", "ai"):
                 return None  # boshqa mos rasm yoʻq — oldingisi qoladi
             extra["image_status"] = "missing"
             await self.ctx.repo.posts.update(post.id, {"image_path": None, "extra": extra})  # type: ignore[arg-type]
-            return None
-        cover = await self._cover(found.data, post)
-        if cover is None:
             return None
         path = await self._save(post.id, cover)  # type: ignore[arg-type]
         extra.update(

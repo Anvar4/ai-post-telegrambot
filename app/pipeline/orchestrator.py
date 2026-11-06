@@ -357,7 +357,11 @@ class Pipeline:
         ):
             return "⏳ Rasm allaqachon tayyorlangan yoki tayyorlanmoqda"
         images = self.ctx.services.get("images")
-        path = await images.make_for_post(post_id, force_ai=True) if images is not None else None
+        try:
+            path = await images.make_for_post(post_id, force_ai=True) if images is not None else None
+        except Exception as exc:
+            logger.warning("Post #{} uchun AI rasm yaratilmadi: {}", post_id, mask_secrets(str(exc)))
+            path = None
         post = await self.repo.posts.get(post_id)
         if post is None or post.status != S.PENDING_APPROVAL:
             return "Post topilmadi yoki holati oʻzgargan"
