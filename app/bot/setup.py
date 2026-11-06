@@ -7,7 +7,17 @@ from collections.abc import Callable
 from aiogram import Dispatcher, Router
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from app.bot.handlers import admin, admin_content, analytics, approval, group, manual, qa, updates
+from app.bot.handlers import (
+    admin,
+    admin_content,
+    analytics,
+    approval,
+    group,
+    manual,
+    qa,
+    settings_menu,
+    updates,
+)
 from app.bot.middlewares import on_error
 from app.context import AppContext
 
@@ -34,6 +44,7 @@ def build_dispatcher(ctx: AppContext) -> Dispatcher:
         manual.create_router(),
         admin.create_router(),
         admin_content.create_router(),
+        settings_menu.create_router(),
         analytics.create_router(),
         updates.create_router(),
         qa.create_dm_router(),

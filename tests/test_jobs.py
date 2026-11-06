@@ -19,9 +19,9 @@ async def test_scheduler_registers_all_jobs(ctx) -> None:
     assert {
         "collect",
         "score",
-        "slot_morning",
-        "slot_midday",
-        "slot_evening",
+        "slot_0830",
+        "slot_1300",
+        "slot_1930",
         "publish_due",
         "expire",
         "digest",
@@ -37,19 +37,53 @@ async def test_scheduler_registers_all_jobs(ctx) -> None:
 
 async def test_slot_prepare_time_is_45_min_before(ctx) -> None:
     scheduler = await setup_scheduler(ctx, persistent=False)
-    trig = str(scheduler.get_job("slot_morning").trigger)
+    trig = str(scheduler.get_job("slot_0830").trigger)
     assert "hour='7'" in trig and "minute='45'" in trig
-    evening = str(scheduler.get_job("slot_evening").trigger)
+    evening = str(scheduler.get_job("slot_1930").trigger)
     assert "hour='18'" in evening and "minute='45'" in evening
     weekly = str(scheduler.get_job("weekly_report").trigger)
     assert "day_of_week='mon'" in weekly and "hour='9'" in weekly
 
 
 async def test_custom_slot_time_from_runtime(ctx) -> None:
-    await ctx.runtime.set("slots", {"morning": "09:10", "midday": "13:00", "evening": "19:30"})
+    await ctx.runtime.set("slot_times", ["09:10", "13:00", "19:30"])
     scheduler = await setup_scheduler(ctx, persistent=False)
-    trig = str(scheduler.get_job("slot_morning").trigger)
+    trig = str(scheduler.get_job("slot_0910").trigger)
     assert "hour='8'" in trig and "minute='25'" in trig
+    assert scheduler.get_job("slot_0830") is None
+
+
+async def test_reschedule_drops_removed_times(ctx) -> None:
+    from app.scheduler.setup import schedule_slots
+
+    scheduler = await setup_scheduler(ctx, persistent=False)
+    await ctx.runtime.set("slot_times", ["08:30", "10:00"])
+    await schedule_slots(ctx, scheduler)
+    ids = {j.id for j in scheduler.get_jobs() if j.id.startswith("slot_")}
+    assert ids == {"slot_0830", "slot_1000"}
+
+
+async def test_stale_slot_job_removes_itself(ctx) -> None:
+    class Pipe:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def prepare_slot(self, slot_time, scheduled_at):
+            self.calls.append(slot_time)
+
+    scheduler = await setup_scheduler(ctx, persistent=False)
+    scheduler.add_job(
+        f"{jobs.__name__}:slot_job", "interval", minutes=60, args=["morning"], id="slot_morning"
+    )
+    ctx.services["pipeline"] = pipe = Pipe()
+    set_ctx(ctx)
+    try:
+        await jobs.slot_job("morning")  # eski versiyadan qolgan vazifa
+        await jobs.slot_job("13:00")
+    finally:
+        set_ctx(None)
+    assert scheduler.get_job("slot_morning") is None
+    assert pipe.calls == ["13:00"]
 
 
 async def test_job_errors_are_reported(ctx) -> None:
@@ -80,8 +114,7 @@ async def test_missing_service_job_is_noop(ctx) -> None:
 
 def test_upcoming_slot_times() -> None:
     now = datetime(2026, 11, 6, 12, 0, tzinfo=TZ)
-    slots = {"morning": "08:30", "midday": "13:00", "evening": "19:30"}
-    times = upcoming_slot_times(now, slots)
+    times = upcoming_slot_times(now, ["08:30", "13:00", "19:30"])
     assert times[0] == datetime(2026, 11, 6, 13, 0, tzinfo=TZ)
     assert times[1] == datetime(2026, 11, 6, 19, 30, tzinfo=TZ)
     assert times[2] == datetime(2026, 11, 7, 8, 30, tzinfo=TZ)

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any
 
 from loguru import logger
@@ -56,13 +58,22 @@ async def score_job(ctx: AppContext) -> None:
 
 
 @job("slot")
-async def slot_job(ctx: AppContext, slot_name: str) -> None:
+async def slot_job(ctx: AppContext, slot_time: str) -> None:
+    if slot_time not in await ctx.runtime.get("slot_times"):
+        # Sozlamadan olib tashlangan (yoki eski versiyadan qolgan) vazifa — o'zini o'chiradi
+        scheduler = ctx.services.get("scheduler")
+        if scheduler is not None:
+            with contextlib.suppress(Exception):
+                scheduler.remove_job(f"slot_{slot_time.replace(':', '')}")
+        return
     pipeline = ctx.services.get("pipeline")
     if pipeline is None:
         return
-    slots = await ctx.runtime.get("slots")
-    today = to_tz(utcnow(), ctx.settings.tz).date()
-    await pipeline.prepare_slot(slot_name, slot_datetime(today, slots[slot_name], ctx.settings.tz))
+    local_now = to_tz(utcnow(), ctx.settings.tz)
+    at = slot_datetime(local_now.date(), slot_time, ctx.settings.tz)
+    if at < local_now - timedelta(hours=1):
+        at += timedelta(days=1)  # tayyorlash yarim tundan oldin boshlangan bo'lsa
+    await pipeline.prepare_slot(slot_time, at)
 
 
 @job("publish_due")

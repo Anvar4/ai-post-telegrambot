@@ -17,7 +17,7 @@ from app.bot.approval_view import send_for_approval
 from app.collectors.dedupe import title_similarity
 from app.collectors.extract import extract_text
 from app.content.formatting import normalize_uz, sanitize_html
-from app.content.schedule import slot_kind
+from app.content.schedule import plan_day
 from app.content.templates import render_footer
 from app.db.models import Post, Story
 from app.pipeline.check import Checker
@@ -54,15 +54,27 @@ class Pipeline:
 
     # ------------------------------------------------------------------ slotlar
 
-    async def prepare_slot(self, slot_name: str, scheduled_at: datetime) -> int | None:
+    async def prepare_slot(self, slot_time: str, scheduled_at: datetime) -> int | None:
         rt = self.ctx.runtime
         if await rt.paused() or await rt.publish_mode() == "manual":
             return None
+        times = list(await rt.get("slot_times"))
+        if slot_time not in times:
+            return None  # sozlamadan olib tashlangan vaqt
         local = to_tz(scheduled_at, self.ctx.settings.tz)
-        slot_key = f"{local.date().isoformat()}:{slot_name}"
+        slot_key = f"{local.date().isoformat()}:{slot_time}"
         if await self._slot_taken(slot_key):
             return None
-        kind = slot_kind(slot_name, local.weekday())
+        categories = list(await rt.get("categories"))
+        plan = plan_day(
+            local.weekday(),
+            times,
+            categories,
+            int(await rt.get("polls_per_week")),
+            int(await rt.get("quizzes_per_week")),
+        )
+        kind = plan[times.index(slot_time)]
+        tips_ok = "maslahat" in categories
         if kind in (PostKind.POLL, PostKind.QUIZ):
             svc = self.ctx.services.get("polls" if kind == PostKind.POLL else "quizzes")
             if svc is not None:
@@ -82,7 +94,7 @@ class Pipeline:
             pid = await self.prepare_from_story(story.id, final_kind, scheduled_at, slot=slot_key)
             if pid is not None:
                 return pid
-        if kind in (PostKind.TOOL, PostKind.SITE):
+        if kind in (PostKind.TOOL, PostKind.SITE) and tips_ok:
             return await self.prepare_tip(scheduled_at, slot=slot_key)
         await self.ctx.notifier.notify(
             f"ℹ️ {local:%d.%m %H:%M} slot uchun mos material topilmadi — post tayyorlanmadi.",
@@ -559,6 +571,8 @@ class Pipeline:
         rt = self.ctx.runtime
         if await rt.paused() or await rt.publish_mode() == "manual":
             return None
+        if "kiber" not in await rt.get("categories"):
+            return None  # kiberxavfsizlik turkumi o'chirilgan
         try:
             await self.selector.score_new(source_categories=("kiber",))
         except Exception as exc:

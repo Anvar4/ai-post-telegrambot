@@ -12,7 +12,10 @@ if TYPE_CHECKING:
 RUNTIME_DEFAULTS: dict[str, Any] = {
     "publish_mode": None,  # None -> .env dagi PUBLISH_MODE
     "paused": False,
-    "slots": {"morning": "08:30", "midday": "13:00", "evening": "19:30"},
+    "slot_times": ["08:30", "13:00", "19:30"],  # kuniga nechta post va soat nechida
+    "categories": ["kiber", "yangilik", "ai", "ilova", "sayt", "maslahat"],
+    "polls_per_week": 2,
+    "quizzes_per_week": 2,
     "digest": {"weekday": 6, "time": "20:00"},  # 6 = yakshanba
     "quiet": {"start": "23:00", "end": "07:00", "resume": "07:30"},
     "approval_timeout_action": "wait",  # wait | publish

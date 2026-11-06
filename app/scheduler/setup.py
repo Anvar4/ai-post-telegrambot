@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.content.schedule import SLOT_NAMES
 from app.context import AppContext
 from app.utils.timeutil import parse_hhmm
 
@@ -25,18 +26,27 @@ def _minus(hhmm: str, minutes: int) -> tuple[int, int]:
     return t.hour, t.minute
 
 
+def slot_job_id(slot_time: str) -> str:
+    return f"slot_{slot_time.replace(':', '')}"
+
+
 async def schedule_slots(ctx: AppContext, scheduler: AsyncIOScheduler) -> None:
-    """Slot va dayjest vazifalarini joriy sozlamalar bo'yicha (qayta) qo'yadi."""
+    """Slot va dayjest vazifalarini sozlamalar bo'yicha (qayta) qo'yadi; olib tashlangan vaqtlar o'chadi."""
     tz = ZoneInfo(ctx.settings.tz)
-    slots = await ctx.runtime.get("slots")
+    times = list(await ctx.runtime.get("slot_times"))
     before = int(await ctx.runtime.get("prepare_minutes_before"))
-    for name in SLOT_NAMES:
-        hour, minute = _minus(slots[name], before)
+    wanted = {slot_job_id(t): t for t in times}
+    for job in scheduler.get_jobs():
+        if job.id.startswith("slot_") and job.id not in wanted:
+            with contextlib.suppress(JobLookupError):
+                scheduler.remove_job(job.id)
+    for job_id, slot_time in wanted.items():
+        hour, minute = _minus(slot_time, before)
         scheduler.add_job(
             f"{J}slot_job",
             CronTrigger(hour=hour, minute=minute, timezone=tz),
-            args=[name],
-            id=f"slot_{name}",
+            args=[slot_time],
+            id=job_id,
             replace_existing=True,
         )
     digest = await ctx.runtime.get("digest")

@@ -26,6 +26,11 @@ class ManualCB(CallbackData, prefix="mp"):
     ts: int = 0  # "at" uchun: UTC unix vaqt
 
 
+class SettingsCB(CallbackData, prefix="st"):
+    action: str  # view | t (vaqt) | c (turkum) | pl | qz | all | noop
+    value: str = ""
+
+
 class ModCB(CallbackData, prefix="mod"):
     action: str  # ban | skip
     chat_id: int

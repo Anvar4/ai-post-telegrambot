@@ -200,3 +200,12 @@ async def test_breaking_candidates(ctx) -> None:
     await add_story(ctx, "Breaking but low", status="scored", score=70, category="kiber", breaking=True)
     found = await Selector(ctx, clock=lambda: NOW).breaking_candidates(min_score=85)
     assert [s.id for s in found] == [hot]
+
+
+async def test_pick_skips_disabled_categories(ctx) -> None:
+    await add_story(ctx, "Big breach", status="scored", score=95, category="kiber")
+    ai = await add_story(ctx, "Model release", status="scored", score=70, category="ai")
+    await ctx.runtime.set("categories", ["ai", "ilova"])
+    story = await Selector(ctx, clock=lambda: NOW).pick(PostKind.NEWS)
+    assert story is not None and story.id == ai
+    assert await Selector(ctx, clock=lambda: NOW).pick(PostKind.ALERT) is None

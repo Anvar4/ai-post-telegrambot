@@ -1,4 +1,4 @@
-"""Admin: /post, /queue, /show, /time, /sources, /source_add, /settings, /set, /digest."""
+"""Admin: /post, /queue, /show, /time, /sources, /source_add, /set, /digest, /poll, /quiz."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from app.bot.handlers.admin import MENU_HANDLERS
 from app.bot.keyboards import SourceCB
 from app.bot.middlewares import AdminFilter
 from app.content.formatting import escape
+from app.content.schedule import ALL_CATEGORIES, MAX_SLOTS_PER_DAY, normalize_times
 from app.context import AppContext
 from app.db.models import Source
 from app.pipeline.state import PostStatus
@@ -34,8 +35,10 @@ INT_KEYS = {
     "min_score": (0, 100),
     "category_daily_cap": (1, 5),
     "prepare_minutes_before": (10, 180),
+    "polls_per_week": (0, 7),
+    "quizzes_per_week": (0, 7),
 }
-RESCHEDULE_KEYS = ("slots", "digest", "prepare_minutes_before")
+RESCHEDULE_KEYS = ("slot_times", "digest", "prepare_minutes_before")
 
 
 # ---------------------------------------------------------------- /post
@@ -188,19 +191,24 @@ async def cmd_source_add(message: Message, command: CommandObject, ctx: AppConte
 
 async def settings_text(ctx: AppContext) -> str:
     values = await ctx.runtime.all()
-    lines = ["⚙️ <b>Sozlamalar</b>"]
+    lines = ["🔧 <b>Barcha sozlamalar</b>"]
     for key, value in values.items():
         lines.append(f"• <code>{key}</code> = {escape(str(value))}")
     lines.append(
         "\nOʻzgartirish: <code>/set kalit qiymat</code>\n"
-        "Masalan: /set slots.morning 08:30 · /set quiet.start 23:00 · "
-        "/set approval_timeout_action publish · /set min_score 55 · /set image_review false"
+        "Masalan: /set slot_times 08:30,13:00,19:30 · /set categories kiber,ai · "
+        "/set quiet.start 23:00 · /set approval_timeout_action publish · /set min_score 55"
     )
     return "\n".join(lines)
 
 
-async def cmd_settings(message: Message, ctx: AppContext) -> None:
-    await message.answer(await settings_text(ctx))
+async def reschedule(ctx: AppContext) -> None:
+    """Vaqt sozlamalari o'zgarganda slot va dayjest vazifalarini qayta qo'yadi."""
+    scheduler = ctx.services.get("scheduler")
+    if scheduler is not None:
+        from app.scheduler.setup import schedule_slots
+
+        await schedule_slots(ctx, scheduler)
 
 
 def _parse_bool(value: str) -> bool | None:
@@ -245,13 +253,23 @@ async def apply_setting(ctx: AppContext, key: str, raw: str) -> str:
         if raw not in {"wait", "publish"}:
             raise ValueError("wait yoki publish")
         value = raw
+    elif base == "slot_times":
+        try:
+            value = normalize_times(raw.replace(";", ",").split(","))
+        except ValueError:
+            raise ValueError("Vaqtlar HH:MM koʻrinishida, vergul bilan: 08:30,13:00,19:30") from None
+        if len(value) > MAX_SLOTS_PER_DAY:
+            raise ValueError(f"Kuniga eng koʻpi {MAX_SLOTS_PER_DAY} ta vaqt")
+    elif base == "categories":
+        items = {c.strip() for c in raw.replace(";", ",").split(",") if c.strip()}
+        if not items or items - set(ALL_CATEGORIES):
+            raise ValueError("Turkumlar (kamida bittasi): " + ", ".join(ALL_CATEGORIES))
+        value = [c for c in ALL_CATEGORIES if c in items]
     else:
         raise ValueError(f"{key} ni oʻzgartirib boʻlmaydi")
     await ctx.runtime.set(base, value)
-    if base in RESCHEDULE_KEYS and ctx.services.get("scheduler") is not None:
-        from app.scheduler.setup import schedule_slots
-
-        await schedule_slots(ctx, ctx.services["scheduler"])
+    if base in RESCHEDULE_KEYS:
+        await reschedule(ctx)
     return f"✅ {key} = {escape(str(value))}"
 
 
@@ -302,7 +320,7 @@ async def cmd_quiz(message: Message, command: CommandObject, ctx: AppContext) ->
     await _interactive(message, command, ctx, "quizzes", "Test")
 
 
-MENU_HANDLERS.update({"queue": queue_text, "sources": sources_text, "settings": settings_text})
+MENU_HANDLERS.update({"queue": queue_text, "sources": sources_text})
 
 
 def create_router() -> Router:
@@ -315,7 +333,6 @@ def create_router() -> Router:
     router.message.register(cmd_time, Command("time"))
     router.message.register(cmd_sources, Command("sources"))
     router.message.register(cmd_source_add, Command("source_add"))
-    router.message.register(cmd_settings, Command("settings"))
     router.message.register(cmd_set, Command("set"))
     router.message.register(cmd_digest, Command("digest"))
     router.message.register(cmd_poll, Command("poll"))

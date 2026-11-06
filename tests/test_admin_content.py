@@ -98,10 +98,18 @@ async def test_source_add_command(ctx) -> None:
 
 async def test_set_command_updates_and_validates(ctx) -> None:
     dp, bot = dispatcher(ctx)
-    await dp.feed_update(bot, msg_update("/set slots.morning 09:00", ADMIN))
-    assert (await ctx.runtime.get("slots"))["morning"] == "09:00"
-    await dp.feed_update(bot, msg_update("/set slots.morning 25:99", ADMIN))
-    assert (await ctx.runtime.get("slots"))["morning"] == "09:00"
+    await dp.feed_update(bot, msg_update("/set slot_times 19:30, 09:00,13:00", ADMIN))
+    assert await ctx.runtime.get("slot_times") == ["09:00", "13:00", "19:30"]
+    await dp.feed_update(bot, msg_update("/set slot_times 09:00,25:99", ADMIN))
+    assert await ctx.runtime.get("slot_times") == ["09:00", "13:00", "19:30"]
+    await dp.feed_update(bot, msg_update("/set categories ai,kiber", ADMIN))
+    assert await ctx.runtime.get("categories") == ["kiber", "ai"]
+    await dp.feed_update(bot, msg_update("/set categories futbol", ADMIN))
+    assert await ctx.runtime.get("categories") == ["kiber", "ai"]
+    await dp.feed_update(bot, msg_update("/set polls_per_week 3", ADMIN))
+    assert await ctx.runtime.get("polls_per_week") == 3
+    await dp.feed_update(bot, msg_update("/set quizzes_per_week 9", ADMIN))
+    assert await ctx.runtime.get("quizzes_per_week") == 2
     await dp.feed_update(bot, msg_update("/set approval_timeout_action publish", ADMIN))
     assert await ctx.runtime.get("approval_timeout_action") == "publish"
     await dp.feed_update(bot, msg_update("/set approval_timeout_action yomon", ADMIN))
@@ -111,10 +119,14 @@ async def test_set_command_updates_and_validates(ctx) -> None:
 
 
 async def test_settings_command_shows_values(ctx) -> None:
+    from app.bot.keyboards import SettingsCB
+    from tests.tg import callback_update
+
     dp, bot = dispatcher(ctx)
     await dp.feed_update(bot, msg_update("/settings", ADMIN))
-    text = "\n".join(sent_texts(bot))
-    assert "08:30" in text and "approval_timeout_action" in text
+    assert "08:30" in "\n".join(sent_texts(bot))
+    await dp.feed_update(bot, callback_update(SettingsCB(action="all").pack(), ADMIN))
+    assert "approval_timeout_action" in "\n".join(sent_texts(bot))
 
 
 async def test_digest_command(ctx) -> None:

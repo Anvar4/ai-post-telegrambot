@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.bot.keyboards import MenuCB, main_menu
 from app.bot.middlewares import AdminFilter
@@ -146,7 +147,9 @@ async def cmd_id(message: Message, ctx: AppContext) -> None:
     await message.answer(f"Chat ID: <code>{message.chat.id}</code>\nSizning ID: <code>{user_id}</code>")
 
 
-MENU_HANDLERS = {
+# Menyu tugmasi -> matn (yoki matn + klaviatura)
+MenuBuilder = Callable[[AppContext], Awaitable[str | tuple[str, InlineKeyboardMarkup]]]
+MENU_HANDLERS: dict[str, MenuBuilder] = {
     "status": status_text,
     "budget": budget_text,
     "logs": logs_text,
@@ -158,7 +161,12 @@ async def on_menu(call: CallbackQuery, callback_data: MenuCB, ctx: AppContext) -
     await call.answer()
     if builder is None or call.message is None:
         return
-    await call.message.answer(await builder(ctx))
+    result = await builder(ctx)
+    if isinstance(result, tuple):
+        text, markup = result
+        await call.message.answer(text, reply_markup=markup)
+    else:
+        await call.message.answer(result)
 
 
 def create_router() -> Router:

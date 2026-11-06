@@ -13,8 +13,8 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.keyboards import ApprovalCB
 from app.bot.middlewares import AdminFilter
-from app.content.schedule import upcoming_slot_times
 from app.context import AppContext
+from app.pipeline.slots import free_slots
 from app.pipeline.state import PostStatus, transition
 from app.utils.timeutil import to_tz, utcnow
 
@@ -38,18 +38,12 @@ def is_ready_text(text: str) -> bool:
     return len(text) >= 300 or "<b>" in text or text.count("\n") >= 3
 
 
-async def _next_free_slot(ctx: AppContext) -> datetime:
-    slots = await ctx.runtime.get("slots")
-    now = utcnow()
-    taken = {
-        p.scheduled_at.replace(second=0, microsecond=0)
-        for p in await ctx.repo.posts.find({"status": S.SCHEDULED})
-        if p.scheduled_at is not None
-    }
-    for t in upcoming_slot_times(now + timedelta(minutes=5), slots, ctx.settings.tz):
-        if t.astimezone(now.tzinfo).replace(second=0, microsecond=0) not in taken:
-            return t
-    return now + timedelta(minutes=10)
+async def _next_free_slot(ctx: AppContext) -> tuple[datetime, str | None]:
+    """Keyingi boʻsh slot (vaqt, slot kaliti); boʻsh slot boʻlmasa — 10 daqiqadan keyin."""
+    free = await free_slots(ctx, limit=1)
+    if free:
+        return free[0]
+    return utcnow() + timedelta(minutes=10), None
 
 
 async def on_approval(
@@ -65,16 +59,17 @@ async def on_approval(
         return
 
     if action in ("pub", "sched"):
-        when = utcnow()
+        when, new_slot = utcnow(), None
         if action == "sched":
-            when = (
-                post.scheduled_at
-                if post.scheduled_at and post.scheduled_at > utcnow()
-                else await _next_free_slot(ctx)
-            )
+            if post.scheduled_at and post.scheduled_at > utcnow():
+                when = post.scheduled_at
+            else:
+                when, new_slot = await _next_free_slot(ctx)
         p = await ctx.repo.posts.get(pid)
         assert p is not None
         p.scheduled_at = when
+        if new_slot:
+            p.slot = new_slot  # AI shu slotga yana post tayyorlamaydi
         if p.status != S.SCHEDULED:
             await transition(ctx.repo, p, S.SCHEDULED, "admin", action=action)
         await ctx.repo.posts.save(p)
