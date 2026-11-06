@@ -17,6 +17,7 @@ def register_services(ctx: AppContext) -> None:
     from app.analytics.metrics import MetricsService
     from app.analytics.reports import ReportService
     from app.collectors.service import CollectorService
+    from app.images.search import ImageSearch
     from app.interactive.moderation import ModerationService
     from app.interactive.polls import PollService
     from app.interactive.qa import QAService
@@ -30,7 +31,8 @@ def register_services(ctx: AppContext) -> None:
     pipeline = Pipeline(ctx)
     ctx.services["pipeline"] = pipeline
     ctx.services["selector"] = pipeline.selector
-    ctx.services["images"] = ImageStage(ctx)
+    search = ImageSearch(ctx.http, pexels_key=_secret(s.pexels_api_key)) if ctx.http is not None else None
+    ctx.services["images"] = ImageStage(ctx, search=search)
     ctx.services["polls"] = PollService(ctx)
     ctx.services["quizzes"] = QuizService(ctx)
     ctx.services["qa"] = QAService(ctx)

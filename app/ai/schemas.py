@@ -23,6 +23,7 @@ class WriterOutput(BaseModel):
     text_html: str = Field(description="Telegram HTML formatidagi post")
     hashtags: list[str] = Field(default_factory=list)
     image_prompt_en: str = Field(default="", description="Inglizcha qisqa rasm prompti")
+    image_query_en: str = Field(default="", description="Fotobank qidiruvi uchun 2–4 inglizcha soʻz")
 
 
 class FilterItem(BaseModel):

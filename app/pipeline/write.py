@@ -104,7 +104,11 @@ class Writer:
             text = text.rstrip() + "\n" + footer
         title = normalize_uz(html_to_text(out.title_short)).strip()[:TITLE_SHORT_LIMIT].strip()
         return WriterOutput(
-            title_short=title, text_html=text, hashtags=hashtags, image_prompt_en=out.image_prompt_en.strip()
+            title_short=title,
+            text_html=text,
+            hashtags=hashtags,
+            image_prompt_en=out.image_prompt_en.strip(),
+            image_query_en=out.image_query_en.strip(),
         )
 
 

@@ -24,6 +24,14 @@ def slot_key(when: datetime, tz: str) -> str:
     return f"{local.date().isoformat()}:{local:%H:%M}"
 
 
+async def next_free_slot(ctx: AppContext) -> tuple[datetime, str | None]:
+    """Keyingi boʻsh slot (vaqt, kalit); boʻsh slot boʻlmasa — 10 daqiqadan keyin, kalitsiz."""
+    free = await free_slots(ctx, limit=1)
+    if free:
+        return free[0]
+    return utcnow() + timedelta(minutes=10), None
+
+
 async def free_slots(
     ctx: AppContext, limit: int = 3, now: datetime | None = None
 ) -> list[tuple[datetime, str]]:

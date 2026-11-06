@@ -22,6 +22,7 @@ RUNTIME_DEFAULTS: dict[str, Any] = {
     "approval_timeout_min": 30,
     "news_expiry_hours": 6,
     "image_review": True,
+    "image_mode": "search_then_ask",  # search_then_ask | ai | none
     "share_cta_every": 6,
     "breaking_min_score": 85,
     "min_score": 50,

@@ -12,6 +12,7 @@ from tests.fakes import FakeImage, ScriptedLLM
 
 
 async def add_post(ctx, kind=PostKind.NEWS) -> int:
+    await ctx.runtime.set("image_mode", "ai")  # bu fayl AI rasm yoʻlini sinaydi
     post = Post(
         kind=kind,
         status=PostStatus.CHECKED,

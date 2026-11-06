@@ -28,7 +28,7 @@ from app.utils.budget import BudgetGuard
 from app.utils.runtime import Runtime
 from app.utils.security import register_secret
 
-USER_AGENT = "ITDunyosiBot/1.0 (Telegram channel content bot)"
+USER_AGENT = "ITDunyosiBot/1.0 (+https://github.com/Anvar4/ai-post-telegrambot)"
 
 
 async def _salt(settings: Settings, repo: Repo) -> str:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-from datetime import datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -14,7 +13,7 @@ from aiogram.types import CallbackQuery, Message
 from app.bot.keyboards import ApprovalCB
 from app.bot.middlewares import AdminFilter
 from app.context import AppContext
-from app.pipeline.slots import free_slots
+from app.pipeline.slots import next_free_slot
 from app.pipeline.state import PostStatus, transition
 from app.utils.timeutil import to_tz, utcnow
 
@@ -26,6 +25,8 @@ ALLOWED_FROM: dict[str, frozenset[PostStatus]] = {
     "rewrite": frozenset({S.PENDING_APPROVAL, S.SCHEDULED}),
     "img": frozenset({S.PENDING_APPROVAL, S.SCHEDULED}),
     "rej": frozenset({S.PENDING_APPROVAL, S.SCHEDULED, S.FAILED}),
+    "aiimg": frozenset({S.PENDING_APPROVAL}),
+    "noimg": frozenset({S.PENDING_APPROVAL}),
 }
 
 
@@ -36,14 +37,6 @@ class EditState(StatesGroup):
 def is_ready_text(text: str) -> bool:
     """Admin tayyor matn yubordimi yoki qisqa ko'rsatmami."""
     return len(text) >= 300 or "<b>" in text or text.count("\n") >= 3
-
-
-async def _next_free_slot(ctx: AppContext) -> tuple[datetime, str | None]:
-    """Keyingi boʻsh slot (vaqt, slot kaliti); boʻsh slot boʻlmasa — 10 daqiqadan keyin."""
-    free = await free_slots(ctx, limit=1)
-    if free:
-        return free[0]
-    return utcnow() + timedelta(minutes=10), None
 
 
 async def on_approval(
@@ -64,7 +57,7 @@ async def on_approval(
             if post.scheduled_at and post.scheduled_at > utcnow():
                 when = post.scheduled_at
             else:
-                when, new_slot = await _next_free_slot(ctx)
+                when, new_slot = await next_free_slot(ctx)
         p = await ctx.repo.posts.get(pid)
         assert p is not None
         p.scheduled_at = when
@@ -102,6 +95,16 @@ async def on_approval(
     elif action == "img":
         await call.answer("🖼 Yangi rasm tayyorlanmoqda…")
         await ctx.service("pipeline").regenerate_image(pid)
+    elif action == "aiimg":
+        await call.answer("🎨 AI rasm tayyorlanmoqda…")
+        await _drop_keyboard(call)
+        result = await ctx.service("pipeline").use_ai_image(pid)
+        if call.message is not None:
+            await call.message.answer(result)
+    elif action == "noimg":
+        result = await ctx.service("pipeline").publish_without_image(pid)
+        await call.answer(result)
+        await _drop_keyboard(call)
 
 
 async def _drop_keyboard(call: CallbackQuery) -> None:

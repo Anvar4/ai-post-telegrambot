@@ -36,3 +36,10 @@ async def test_build_context_requires_mongodb_uri(tmp_path: Path) -> None:
     settings = make_settings(tmp_path, telegram_bot_token="42:TEST-TOKEN-abcdefghijklmnopqrstuvwxyz0123")
     with pytest.raises(ValueError, match="MONGODB_URI"):
         await build_context(settings)
+
+
+def test_user_agent_has_contact_url() -> None:
+    # Wikimedia robot siyosati: aloqa havolasisiz User-Agent 403 oladi
+    from app.main import USER_AGENT
+
+    assert "https://" in USER_AGENT

@@ -113,3 +113,21 @@ async def test_menu_button_opens_interactive_settings(ctx) -> None:
     dp, bot = dispatcher(ctx)
     await dp.feed_update(bot, callback_update(MenuCB(action="settings").pack(), ADMIN))
     assert any("Vaqtlar" in t for t in labels(bot))
+
+
+async def test_image_mode_cycles(ctx) -> None:
+    dp, bot = dispatcher(ctx)
+    await dp.feed_update(bot, msg_update("/settings", ADMIN))
+    seen = []
+    for _ in range(3):
+        await press(dp, bot, "🖼")
+        seen.append(await ctx.runtime.get("image_mode"))
+    assert seen == ["ai", "none", "search_then_ask"]
+
+
+async def test_set_image_mode_validated(ctx) -> None:
+    dp, bot = dispatcher(ctx)
+    await dp.feed_update(bot, msg_update("/set image_mode none", ADMIN))
+    assert await ctx.runtime.get("image_mode") == "none"
+    await dp.feed_update(bot, msg_update("/set image_mode chiroyli", ADMIN))
+    assert await ctx.runtime.get("image_mode") == "none"

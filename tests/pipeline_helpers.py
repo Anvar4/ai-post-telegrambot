@@ -35,6 +35,7 @@ def writer_answer(title: str = "Chrome zaifligi", link: str = SRC_URL) -> str:
             "text_html": post_html(title, link),
             "hashtags": ["#kiberxavfsizlik"],
             "image_prompt_en": "browser shield",
+            "image_query_en": "browser security",
         }
     )
 

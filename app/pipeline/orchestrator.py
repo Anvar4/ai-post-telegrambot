@@ -22,6 +22,7 @@ from app.content.templates import render_footer
 from app.db.models import Post, Story
 from app.pipeline.check import Checker
 from app.pipeline.select import Selector
+from app.pipeline.slots import next_free_slot
 from app.pipeline.state import PostKind, PostStatus, transition
 from app.pipeline.write import DraftResult, Writer, draft_with_checks
 from app.utils.security import mask_secrets
@@ -34,6 +35,7 @@ S = PostStatus
 EXPIRING_KINDS = (PostKind.NEWS, PostKind.ALERT, PostKind.DIGEST)
 SOURCE_TEXT_LIMIT = 12_000
 MAX_STORY_ATTEMPTS = 2
+IMAGE_MISSING_REASON = "🖼 Mos bepul rasm topilmadi — AI rasm (pullik) yoki rasmsiz chiqarish?"
 
 
 def _is_url(text: str) -> bool:
@@ -276,6 +278,8 @@ class Pipeline:
         post.title_short = out.title_short
         post.hashtags = out.hashtags
         post.image_prompt = out.image_prompt_en
+        if out.image_query_en:
+            post.extra = {**(post.extra or {}), "image_query": out.image_query_en}
         await transition(self.repo, post, S.CHECKED, "checker", verdict=report.verdict, rounds=res.rounds)
         if report.verdict == "reject":
             report.needs_approval = True
@@ -285,6 +289,7 @@ class Pipeline:
         post.approval_reason = report.approval_reason
         await self.repo.posts.save(post)
         await self._make_image(post_id)
+        await self._image_gate(post_id)
         await self.after_check(post_id)
         return post_id
 
@@ -307,14 +312,79 @@ class Pipeline:
         if post.status in (S.SELECTED, S.CHECKED, S.PENDING_APPROVAL):
             await transition(self.repo, post, S.DRAFTED, "writer")
 
-    async def _make_image(self, post_id: int) -> None:
+    async def _make_image(self, post_id: int, *, fresh: bool = False) -> None:
         images = self.ctx.services.get("images")
         if images is None:
             return
         try:
-            await images.make_for_post(post_id)
+            await images.make_for_post(post_id, fresh=fresh)
         except Exception as exc:
             logger.warning("Post #{} uchun rasm tayyorlanmadi: {}", post_id, exc)
+
+    async def _image_gate(self, post_id: int) -> None:
+        """Bepul rasm topilmadi: post auto rejimda ham admin qaroriga keladi (AI rasm — pullik)."""
+        post = await self.repo.posts.get(post_id)
+        if post is None or (post.extra or {}).get("image_status") != "missing":
+            return
+        post.extra = {**post.extra, "image_gate": not post.needs_approval}
+        post.needs_approval = True
+        if IMAGE_MISSING_REASON not in (post.approval_reason or ""):
+            post.approval_reason = "; ".join(filter(None, [post.approval_reason, IMAGE_MISSING_REASON]))
+        await self.repo.posts.save(post)
+
+    async def _schedule_now_or_slot(self, post: Post, actor: str, **details: Any) -> datetime:
+        """Kelajakdagi vaqti saqlanadi, aks holda keyingi boʻsh slot; post SCHEDULED boʻladi."""
+        if post.scheduled_at is None or post.scheduled_at <= self.clock():
+            post.scheduled_at, slot = await next_free_slot(self.ctx)
+            if slot:
+                post.slot = slot
+        await transition(self.repo, post, S.SCHEDULED, actor, **details)
+        await self.repo.posts.save(post)
+        return post.scheduled_at
+
+    @staticmethod
+    def _drop_image_reason(post: Post) -> None:
+        parts = [p for p in (post.approval_reason or "").split("; ") if p and p != IMAGE_MISSING_REASON]
+        post.approval_reason = "; ".join(parts) or None
+
+    async def use_ai_image(self, post_id: int) -> str:
+        """Admin ruxsati bilan AI rasm: auto rejimda (boshqa sabab boʻlmasa) rejaga, aks holda tasdiqqa."""
+        # Atomik: tugma ikki marta bosilsa ham pullik rasm bir marta yaratiladi
+        if not await self.repo.posts.cas(
+            post_id,
+            {"status": S.PENDING_APPROVAL, "extra.image_status": "missing"},
+            {"extra.image_status": "generating"},
+        ):
+            return "⏳ Rasm allaqachon tayyorlangan yoki tayyorlanmoqda"
+        images = self.ctx.services.get("images")
+        path = await images.make_for_post(post_id, force_ai=True) if images is not None else None
+        post = await self.repo.posts.get(post_id)
+        if post is None or post.status != S.PENDING_APPROVAL:
+            return "Post topilmadi yoki holati oʻzgargan"
+        if path is None:
+            await self.repo.posts.update(post_id, {"extra.image_status": "missing"})
+            return "❌ AI rasm yaratilmadi — /logs ni koʻring"
+        self._drop_image_reason(post)
+        auto = await self.ctx.runtime.publish_mode() == "auto"
+        if auto and (post.extra or {}).get("image_gate") and post.created_by == "ai":
+            post.needs_approval = False
+            when = await self._schedule_now_or_slot(post, "admin", image="ai")
+            return f"🎨 Rasm tayyor — post {to_tz(when, self.ctx.settings.tz):%d.%m %H:%M} ga qoʻyildi"
+        await self.repo.posts.save(post)
+        await send_for_approval(self.ctx, post_id)
+        return "🎨 Rasm tayyor — postni koʻrib chiqing"
+
+    async def publish_without_image(self, post_id: int) -> str:
+        """Admin qarori: post rasmsiz chiqadi (kelajakdagi vaqtida yoki keyingi boʻsh slotda)."""
+        post = await self.repo.posts.get(post_id)
+        if post is None or post.status != S.PENDING_APPROVAL:
+            return "Post topilmadi yoki holati oʻzgargan"
+        extra = {**(post.extra or {}), "image_status": "none"}
+        extra.pop("image_credit", None)
+        post.extra, post.image_path = extra, None
+        self._drop_image_reason(post)
+        when = await self._schedule_now_or_slot(post, "admin", image="none")
+        return f"📝 Rasmsiz — {to_tz(when, self.ctx.settings.tz):%d.%m %H:%M} ga qoʻyildi"
 
     async def after_check(self, post_id: int) -> None:
         mode = await self.ctx.runtime.publish_mode()
@@ -445,7 +515,7 @@ class Pipeline:
         await send_for_approval(self.ctx, post_id)
 
     async def regenerate_image(self, post_id: int) -> None:
-        await self._make_image(post_id)
+        await self._make_image(post_id, fresh=True)
         await send_for_approval(self.ctx, post_id)
 
     async def prepare_custom(

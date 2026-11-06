@@ -78,6 +78,8 @@ def info_text(post: Post, tz: str) -> str:
         )
     for note in report.get("link_notes", [])[:2]:
         lines.append(f"• {escape(note)}")
+    if extra.get("image_credit"):
+        lines.append(str(extra["image_credit"]))
     for url in (post.source_urls or [])[:3]:
         lines.append(f"🔗 {escape(url)}")
     return "\n".join(lines)[:MESSAGE_LIMIT]
@@ -125,6 +127,8 @@ async def send_for_approval(ctx: AppContext, post_id: int) -> None:
     is_poll = post.kind in (PostKind.POLL, PostKind.QUIZ)
     body = poll_preview(post) if is_poll else post.text_html
     info = info_text(post, ctx.settings.tz)
+    missing = (post.extra or {}).get("image_status") == "missing"
+    keyboard = approval_keyboard(post_id, image_missing=missing)
     for admin_id in ctx.settings.admin_ids:
         try:
             if image and not is_poll and visible_length(body) <= CAPTION_LIMIT:
@@ -133,6 +137,6 @@ async def send_for_approval(ctx: AppContext, post_id: int) -> None:
                 if image and not is_poll:
                     await ctx.sender.send_photo(admin_id, image, None)
                 await ctx.sender.send_message(admin_id, body)
-            await ctx.sender.send_message(admin_id, info, reply_markup=approval_keyboard(post_id))
+            await ctx.sender.send_message(admin_id, info, reply_markup=keyboard)
         except Exception as exc:
             logger.warning("Tasdiqlash xabari yuborilmadi ({}): {}", admin_id, exc)

@@ -20,8 +20,14 @@ from app.content.schedule import (
     normalize_times,
 )
 from app.context import AppContext
+from app.pipeline.image import IMAGE_MODES
 
 WEEKLY_MAX = 7
+IMAGE_MODE_UZ = {
+    "search_then_ask": "qidirish → topilmasa soʻrash",
+    "ai": "doim AI (pullik)",
+    "none": "rasmsiz",
+}
 
 
 def _b(text: str, action: str, value: str = "") -> InlineKeyboardButton:
@@ -33,6 +39,7 @@ async def main_view(ctx: AppContext) -> tuple[str, InlineKeyboardMarkup]:
     times = list(await rt.get("slot_times"))
     cats = list(await rt.get("categories"))
     polls, quizzes = int(await rt.get("polls_per_week")), int(await rt.get("quizzes_per_week"))
+    image_mode = str(await rt.get("image_mode"))
     names = ", ".join(CATEGORY_LABELS[c].split(" ", 1)[1] for c in cats if c in CATEGORY_LABELS)
     text = "\n".join(
         [
@@ -41,6 +48,7 @@ async def main_view(ctx: AppContext) -> tuple[str, InlineKeyboardMarkup]:
             f"🕒 Kuniga <b>{len(times)}</b> ta post: {', '.join(times) or '— (faqat shoshilinch va qoʻlda)'}",
             f"🗂 Turkumlar: {names}",
             f"📊 Soʻrovnoma: haftasiga <b>{polls}</b> · ❓ Test: haftasiga <b>{quizzes}</b>",
+            f"🖼 Rasm: {IMAGE_MODE_UZ.get(image_mode, image_mode)}",
             "",
             "Tugmalar bilan oʻzgartiring. Matn bilan: <code>/set kalit qiymat</code>.",
         ]
@@ -49,6 +57,7 @@ async def main_view(ctx: AppContext) -> tuple[str, InlineKeyboardMarkup]:
         [_b(f"🕒 Vaqtlar ({len(times)})", "view", "times"), _b(f"🗂 Turkumlar ({len(cats)})", "view", "cats")],
         [_b("📊 −", "pl", "-"), _b(f"📊 Soʻrovnoma: {polls}/hafta", "noop"), _b("📊 +", "pl", "+")],
         [_b("❓ −", "qz", "-"), _b(f"❓ Test: {quizzes}/hafta", "noop"), _b("❓ +", "qz", "+")],
+        [_b(f"🖼 Rasm: {IMAGE_MODE_UZ.get(image_mode, image_mode)}", "img")],
         [_b("🔧 Boshqa sozlamalar", "all")],
     ]
     return text, InlineKeyboardMarkup(inline_keyboard=kb)
@@ -142,6 +151,14 @@ async def on_settings(call: CallbackQuery, callback_data: SettingsCB, ctx: AppCo
     elif action in ("pl", "qz"):
         if not await _step(call, ctx, "polls_per_week" if action == "pl" else "quizzes_per_week", value):
             return
+    elif action == "img":
+        current = str(await ctx.runtime.get("image_mode"))
+        nxt = (
+            IMAGE_MODES[(IMAGE_MODES.index(current) + 1) % len(IMAGE_MODES)]
+            if current in IMAGE_MODES
+            else IMAGE_MODES[0]
+        )
+        await ctx.runtime.set("image_mode", nxt)
     elif action == "all":
         await call.answer()
         if call.message is not None:

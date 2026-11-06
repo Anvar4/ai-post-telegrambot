@@ -16,7 +16,7 @@ class MenuCB(CallbackData, prefix="menu"):
 
 
 class ApprovalCB(CallbackData, prefix="ap"):
-    action: str  # pub | sched | edit | rewrite | img | rej
+    action: str  # pub | sched | edit | rewrite | img | rej | aiimg | noimg
     post_id: int
 
 
@@ -27,7 +27,7 @@ class ManualCB(CallbackData, prefix="mp"):
 
 
 class SettingsCB(CallbackData, prefix="st"):
-    action: str  # view | t (vaqt) | c (turkum) | pl | qz | all | noop
+    action: str  # view | t (vaqt) | c (turkum) | pl | qz | img | all | noop
     value: str = ""
 
 
@@ -66,12 +66,20 @@ def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def approval_keyboard(post_id: int) -> InlineKeyboardMarkup:
+def approval_keyboard(post_id: int, *, image_missing: bool = False) -> InlineKeyboardMarkup:
     def b(text: str, action: str) -> InlineKeyboardButton:
         return InlineKeyboardButton(
             text=text, callback_data=ApprovalCB(action=action, post_id=post_id).pack()
         )
 
+    if image_missing:
+        # Bepul rasm topilmadi: pullik AI rasmga ruxsat / rasmsiz / rad etish
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [b("🎨 AI rasm (pullik)", "aiimg"), b("📝 Rasmsiz chiqarish", "noimg")],
+                [b("✏️ Tahrirlash", "edit"), b("❌ Rad etish", "rej")],
+            ]
+        )
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [b("✅ Chiqarish", "pub"), b("🕒 Vaqtga qo'yish", "sched")],

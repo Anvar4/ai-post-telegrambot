@@ -19,6 +19,7 @@ from app.content.formatting import escape
 from app.content.schedule import ALL_CATEGORIES, MAX_SLOTS_PER_DAY, normalize_times
 from app.context import AppContext
 from app.db.models import Source
+from app.pipeline.image import IMAGE_MODES
 from app.pipeline.state import PostStatus
 from app.utils.runtime import RUNTIME_DEFAULTS
 from app.utils.timeutil import parse_hhmm, to_tz, utcnow
@@ -252,6 +253,10 @@ async def apply_setting(ctx: AppContext, key: str, raw: str) -> str:
     elif base == "approval_timeout_action":
         if raw not in {"wait", "publish"}:
             raise ValueError("wait yoki publish")
+        value = raw
+    elif base == "image_mode":
+        if raw not in IMAGE_MODES:
+            raise ValueError("image_mode: " + " | ".join(IMAGE_MODES))
         value = raw
     elif base == "slot_times":
         try:
