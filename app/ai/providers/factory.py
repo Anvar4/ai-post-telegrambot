@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 import httpx
 
 from app.ai.types import ImageClient, LLMClient
-from app.config import Settings
+from app.config import IMAGE_PROVIDERS, MAIN_PROVIDERS, Settings
+
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 
 @dataclass
@@ -34,8 +36,14 @@ def _build_writer(s: Settings, problems: list[str]) -> LLMClient | None:
     if provider is None:
         problems.append("LLM_MAIN_PROVIDER sozlanmagan — yozuvchi vazifasini gpt-6-sol bajaradi")
         return None
+    if provider not in MAIN_PROVIDERS:
+        problems.append(f"LLM_MAIN_PROVIDER='{provider}' noma'lum. Mumkin: {' | '.join(MAIN_PROVIDERS)}")
+        return None
     if not s.llm_main_model:
-        problems.append("LLM_MAIN_MODEL bo'sh — yozuvchi o'chirilgan, zaxira ishlaydi")
+        hint = (
+            " (DeepSeek uchun masalan: deepseek-v4-pro yoki deepseek-flash)" if provider == "deepseek" else ""
+        )
+        problems.append(f"LLM_MAIN_MODEL bo'sh — yozuvchi o'chirilgan, zaxira ishlaydi{hint}")
         return None
     key = _secret(s.llm_main_api_key) or (_secret(s.openai_api_key) if provider == "openai" else None)
     if not key:
@@ -50,6 +58,14 @@ def _build_writer(s: Settings, problems: list[str]) -> LLMClient | None:
         from app.ai.providers.gemini import GeminiClient
 
         return GeminiClient(key, s.llm_main_model, timeout=timeout)
+    if provider == "deepseek":
+        from app.ai.providers.openai_compat import OpenAICompatClient
+
+        client = OpenAICompatClient(
+            key, s.llm_main_model, base_url=s.llm_main_base_url or DEEPSEEK_BASE_URL, timeout=timeout
+        )
+        client.provider = "deepseek"
+        return client
     if provider == "openai_compatible":
         if not s.llm_main_base_url:
             problems.append("openai_compatible uchun LLM_MAIN_BASE_URL kerak — yozuvchi o'chirilgan")
@@ -64,7 +80,15 @@ def _build_writer(s: Settings, problems: list[str]) -> LLMClient | None:
 
 def _build_image(s: Settings, http: httpx.AsyncClient | None, problems: list[str]) -> ImageClient | None:
     provider = s.image_provider
+    if provider is None and s.image_api_key is not None:
+        problems.append(
+            f"IMAGE_API_KEY bor, lekin IMAGE_PROVIDER koʻrsatilmagan ({' | '.join(IMAGE_PROVIDERS[:-1])})"
+        )
+        return None
     if provider in (None, "none"):
+        return None
+    if provider not in IMAGE_PROVIDERS:
+        problems.append(f"IMAGE_PROVIDER='{provider}' noma'lum. Mumkin: {' | '.join(IMAGE_PROVIDERS)}")
         return None
     key = _secret(s.image_api_key) or (_secret(s.openai_api_key) if provider == "openai" else None)
     if not key:

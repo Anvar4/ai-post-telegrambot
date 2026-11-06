@@ -11,8 +11,34 @@ from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 PublishMode = Literal["auto", "semi_auto", "manual"]
-MainProvider = Literal["anthropic", "openai", "gemini", "openai_compatible"]
-ImageProvider = Literal["openai", "gemini", "stability", "replicate", "fal", "none"]
+MAIN_PROVIDERS = ("anthropic", "openai", "gemini", "deepseek", "openai_compatible")
+IMAGE_PROVIDERS = ("openai", "gemini", "stability", "replicate", "fal", "none")
+_PROVIDER_ALIASES = {
+    "claude": "anthropic",
+    "google": "gemini",
+    "gpt": "openai",
+    "chatgpt": "openai",
+    "dall-e": "openai",
+    "dalle": "openai",
+    "gpt-image": "openai",
+    "imagen": "gemini",
+    "compatible": "openai_compatible",
+    "openai-compatible": "openai_compatible",
+    "stabilityai": "stability",
+    "fal.ai": "fal",
+}
+
+
+def normalize_provider(value: str | None, allowed: tuple[str, ...]) -> str | None:
+    """Provayder nomini tushunarli ko'rinishga keltiradi; noma'lum bo'lsa o'zgarishsiz qaytaradi."""
+    if value is None or not value.strip():
+        return None
+    v = value.strip().lower()
+    v = _PROVIDER_ALIASES.get(v, v)
+    if v in allowed:
+        return v
+    matches = [a for a in allowed if a.startswith(v)] if len(v) >= 4 else []
+    return matches[0] if len(matches) == 1 else v
 
 
 class Settings(BaseSettings):
@@ -36,13 +62,13 @@ class Settings(BaseSettings):
     dry_run: bool = True
 
     # 1-kalit: yozuvchi
-    llm_main_provider: MainProvider | None = None
+    llm_main_provider: str | None = None
     llm_main_model: str | None = None
     llm_main_api_key: SecretStr | None = None
     llm_main_base_url: str | None = None
 
     # 2-kalit: rasm
-    image_provider: ImageProvider | None = None
+    image_provider: str | None = None
     image_model: str | None = None
     image_api_key: SecretStr | None = None
     image_size: str = "1024x1024"
@@ -75,6 +101,16 @@ class Settings(BaseSettings):
         if isinstance(value, int):
             return [value]
         return value
+
+    @field_validator("llm_main_provider", mode="before")
+    @classmethod
+    def _main_provider(cls, value: Any) -> Any:
+        return normalize_provider(value, MAIN_PROVIDERS) if isinstance(value, str) else value
+
+    @field_validator("image_provider", mode="before")
+    @classmethod
+    def _image_provider(cls, value: Any) -> Any:
+        return normalize_provider(value, IMAGE_PROVIDERS) if isinstance(value, str) else value
 
     @field_validator("channel_username", mode="before")
     @classmethod
@@ -133,6 +169,50 @@ class Settings(BaseSettings):
             self.hash_salt,
         ]
         return [s.get_secret_value() for s in secrets if s and s.get_secret_value()]
+
+
+def env_file_warnings(path: Path | str = ".env") -> list[str]:
+    """.env dagi takrorlangan kalitlar (oxirgisi ustun keladi — ko'pincha bo'sh qiymat kalitni yo'qotadi)."""
+    p = Path(path)
+    if not p.is_file():
+        return []
+    seen: dict[str, list[tuple[int, bool]]] = {}
+    for n, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.split(" #", 1)[0].strip()
+        seen.setdefault(key.strip(), []).append((n, bool(value)))
+    warnings = []
+    for key, entries in seen.items():
+        if len(entries) < 2:
+            continue
+        rows = ", ".join(str(n) for n, _ in entries)
+        if entries[-1][1] is False and any(filled for _, filled in entries[:-1]):
+            warnings.append(
+                f".env: {key} {rows}-qatorlarda takrorlangan, oxirgisi boʻsh — qiymat yoʻqoladi. "
+                "Boʻsh qatorni oʻchiring."
+            )
+        else:
+            warnings.append(f".env: {key} {rows}-qatorlarda takrorlangan — oxirgisi ishlatiladi.")
+    return warnings
+
+
+def load_settings(env_file: Path | str | None = ".env") -> tuple[Settings | None, str | None]:
+    """Sozlamalarni yuklaydi; xato bo'lsa tushunarli matn qaytaradi (traceback o'rniga)."""
+    from pydantic import ValidationError
+
+    from app.utils.security import mask_secrets
+
+    try:
+        return Settings(_env_file=env_file), None  # type: ignore[call-arg]
+    except ValidationError as exc:
+        lines = []
+        for err in exc.errors():
+            field = ".".join(str(x) for x in err.get("loc", ())).upper()
+            lines.append(f"• {field}: {err.get('msg')} (qiymat: {mask_secrets(repr(err.get('input')))[:60]})")
+        return None, ".env da notoʻgʻri qiymatlar:\n" + "\n".join(lines)
 
 
 @lru_cache

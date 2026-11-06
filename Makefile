@@ -12,8 +12,8 @@ test:
 	$(PY) -m pytest
 
 lint:
-	$(PY) -m ruff check app tests
-	$(PY) -m ruff format --check app tests
+	$(PY) -m ruff check app tests scripts
+	$(PY) -m ruff format --check app tests scripts
 
 typecheck:
 	$(PY) -m mypy

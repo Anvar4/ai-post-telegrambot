@@ -123,15 +123,8 @@ class Pipeline:
             if story is None:
                 return None
             story.status = "used"
-            rows = (
-                await s.execute(
-                    select(Article, Source)
-                    .join(Source, Source.id == Article.source_id, isouter=True)
-                    .where(Article.story_id == story_id)
-                    .order_by(Source.trust.desc().nulls_last(), Article.id)
-                )
-            ).all()
             await s.commit()
+        rows = await self._source_rows(story_id)
         urls: list[str] = []
         extra_allowed: list[str] = []
         for art, _src in rows:
@@ -162,6 +155,20 @@ class Pipeline:
             },
         )
         return await self._draft(pid, force_approval=force_approval, instructions=instructions)
+
+    async def _source_rows(self, story_id: int) -> list[Any]:
+        """Story maqolalari va manbalari (ishonchli manba birinchi)."""
+        async with self.ctx.repo.session() as s:
+            return list(
+                (
+                    await s.execute(
+                        select(Article, Source)
+                        .join(Source, Source.id == Article.source_id, isouter=True)
+                        .where(Article.story_id == story_id)
+                        .order_by(Source.trust.desc().nulls_last(), Article.id)
+                    )
+                ).all()
+            )
 
     async def _source_text(self, rows: Sequence[Any]) -> str:
         parts: list[str] = []

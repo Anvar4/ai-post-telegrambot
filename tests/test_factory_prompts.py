@@ -88,3 +88,33 @@ def test_load_prompt_fills_vars_and_keeps_json_braces() -> None:
 def test_load_prompt_missing_var_raises() -> None:
     with pytest.raises(ValueError):
         load_prompt("writer", kind="news")
+
+
+def test_deepseek_writer_uses_compat_client_with_default_base_url(tmp_path: Path) -> None:
+    c = build_clients(
+        settings(
+            tmp_path, "LLM_MAIN_PROVIDER=deepseek\nLLM_MAIN_MODEL=deepseek-v4-pro\nLLM_MAIN_API_KEY=sk-ds\n"
+        )
+    )
+    assert isinstance(c.writer, OpenAICompatClient)
+    assert c.writer.provider == "deepseek"
+    assert str(c.writer._client.base_url).startswith("https://api.deepseek.com")
+
+
+def test_unknown_providers_reported_not_crashing(tmp_path: Path) -> None:
+    c = build_clients(
+        settings(
+            tmp_path,
+            "LLM_MAIN_PROVIDER=xyz\nLLM_MAIN_MODEL=m\nLLM_MAIN_API_KEY=k\n"
+            "IMAGE_PROVIDER=foo\nIMAGE_API_KEY=k\n",
+        )
+    )
+    assert c.writer is None and c.image is None
+    assert any("LLM_MAIN_PROVIDER" in p and "xyz" in p for p in c.problems)
+    assert any("IMAGE_PROVIDER" in p and "foo" in p for p in c.problems)
+
+
+def test_image_key_without_provider_is_reported(tmp_path: Path) -> None:
+    c = build_clients(settings(tmp_path, "IMAGE_API_KEY=sk-img\n"))
+    assert c.image is None
+    assert any("IMAGE_PROVIDER" in p for p in c.problems)

@@ -79,3 +79,42 @@ def test_env_example_has_no_secret_values() -> None:
 def test_channel_username_normalized(tmp_path: Path) -> None:
     s = load(tmp_path, "CHANNEL_USERNAME=it_dunyosi\n")
     assert s.channel_username == "@it_dunyosi"
+
+
+def test_provider_aliases_normalized(tmp_path: Path) -> None:
+    assert load(tmp_path, "LLM_MAIN_PROVIDER=DeepSeek\n").llm_main_provider == "deepseek"
+    assert load(tmp_path, "LLM_MAIN_PROVIDER=claude\n").llm_main_provider == "anthropic"
+    assert load(tmp_path, "LLM_MAIN_PROVIDER=Google\n").llm_main_provider == "gemini"
+    assert load(tmp_path, "LLM_MAIN_PROVIDER=deep\n").llm_main_provider == "deepseek"  # yagona prefiks
+    assert load(tmp_path, "IMAGE_PROVIDER=google\n").image_provider == "gemini"
+    assert load(tmp_path, "IMAGE_PROVIDER=DALL-E\n").image_provider == "openai"
+
+
+def test_unknown_provider_does_not_crash(tmp_path: Path) -> None:
+    s = load(tmp_path, "LLM_MAIN_PROVIDER=xyz\nIMAGE_PROVIDER=foo\n")
+    assert s.llm_main_provider == "xyz"
+    assert s.image_provider == "foo"
+
+
+def test_load_settings_explains_invalid_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import load_settings
+
+    env = tmp_path / ".env"
+    env.write_text("CHANNEL_ID=@kanal\nDAILY_BUDGET_USD=uch\n", encoding="utf-8")
+    settings, error = load_settings(env)
+    assert settings is None
+    assert "CHANNEL_ID" in error and "DAILY_BUDGET_USD" in error
+
+
+def test_env_duplicate_key_warning(tmp_path: Path) -> None:
+    from app.config import env_file_warnings
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "OPENAI_API_KEY=sk-real\nX=1\nOPENAI_API_KEY=\nCHANNEL_ID=-1\nCHANNEL_ID=-2\n", encoding="utf-8"
+    )
+    warnings = env_file_warnings(env)
+    assert any("OPENAI_API_KEY" in w and "boʻsh" in w for w in warnings)
+    assert any("CHANNEL_ID" in w for w in warnings)
+    assert all("sk-real" not in w for w in warnings)
+    assert env_file_warnings(tmp_path / "missing.env") == []

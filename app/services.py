@@ -24,6 +24,7 @@ def register_services(ctx: AppContext) -> None:
     from app.pipeline.image import ImageStage
     from app.pipeline.orchestrator import Pipeline
     from app.pipeline.publish import Publisher
+    from app.utils.backup import BackupService
 
     s = ctx.settings
     pipeline = Pipeline(ctx)
@@ -38,6 +39,7 @@ def register_services(ctx: AppContext) -> None:
     ctx.services["invites"] = InviteService(ctx)
     ctx.services["reports"] = ReportService(ctx)
     ctx.services["growth"] = GrowthService(ctx)
+    ctx.services["backup"] = BackupService(ctx)
     ctx.services["publisher"] = Publisher(ctx.repo, ctx.sender, s, ctx.notifier, runtime=ctx.runtime)
     if ctx.http is not None:
         ctx.services["collector"] = CollectorService(

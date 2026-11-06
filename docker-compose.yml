@@ -1,0 +1,21 @@
+services:
+  bot:
+    build:
+      context: .
+      args:
+        EXTRAS: all
+    container_name: it-dunyosi-bot
+    env_file: .env
+    environment:
+      TZ: Asia/Tashkent
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+    # init: true — healthcheck bot jarayonini to'xtatganda konteyner ham to'xtaydi va qayta ishga tushadi
+    init: true
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

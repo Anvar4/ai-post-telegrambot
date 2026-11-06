@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import secrets
 import sys
 from typing import Any
@@ -18,7 +19,7 @@ from app.ai.router import AIRouter
 from app.bot.notify import AdminNotifier
 from app.bot.sender import AiogramSender
 from app.bot.setup import ALLOWED_UPDATES, build_dispatcher
-from app.config import Settings, get_settings
+from app.config import Settings, load_settings
 from app.context import AppContext, set_ctx
 from app.db.repo import Repo
 from app.db.session import create_engine, make_sessionmaker, run_migrations
@@ -77,7 +78,9 @@ async def build_context(settings: Settings) -> tuple[AppContext, Bot, Any]:
         salt=await _salt(settings, repo),
         http=http,
     )
-    ctx.services["config_problems"] = clients.problems
+    from app.config import env_file_warnings
+
+    ctx.services["config_problems"] = [*env_file_warnings(), *clients.problems]
     register_services(ctx)
     from app.collectors.seed import seed_sources
 
@@ -114,13 +117,19 @@ async def _startup_checks(ctx: AppContext) -> None:
 
 
 async def run() -> None:
-    settings = get_settings()
+    loaded, error = load_settings()
+    if loaded is None:
+        setup_logging("INFO")
+        logger.error(error)
+        sys.exit(1)
+    settings = loaded
     setup_logging(settings.log_level, settings.data_path / "logs")
     if not settings.telegram_bot_token:
         logger.error("TELEGRAM_BOT_TOKEN .env da yo'q. .env.example dan nusxa olib to'ldiring.")
         sys.exit(1)
     ctx, bot, engine = await build_context(settings)
     set_ctx(ctx)
+    (settings.data_path / "bot.pid").write_text(str(os.getpid()), encoding="utf-8")
     dp = build_dispatcher(ctx)
     scheduler = None
     try:
