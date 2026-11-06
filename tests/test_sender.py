@@ -86,3 +86,40 @@ async def test_sender_disables_link_preview_by_default() -> None:
     sender = AiogramSender(bot, clock=clock.now, sleep=clock.sleep)  # type: ignore[arg-type]
     await sender.send_message(-100, "a")
     assert bot.calls[0]["link_preview_options"].is_disabled is True
+
+
+class FakeMediaBot:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def _msg(self, name: str, kwargs: dict[str, Any]) -> Message:
+        self.calls.append((name, kwargs))
+        return Message(message_id=len(self.calls), date=datetime.now(UTC), chat=Chat(id=1, type="channel"))
+
+    async def send_photo(self, **kwargs: Any) -> Message:
+        return self._msg("photo", kwargs)
+
+    async def send_video(self, **kwargs: Any) -> Message:
+        return self._msg("video", kwargs)
+
+    async def send_animation(self, **kwargs: Any) -> Message:
+        return self._msg("animation", kwargs)
+
+
+async def test_send_media_uses_file_id_by_type() -> None:
+    clock = Clock()
+    bot = FakeMediaBot()
+    sender = AiogramSender(bot, clock=clock.now, sleep=clock.sleep)  # type: ignore[arg-type]
+    await sender.send_media(-100, "photo", "AgP", "<b>a</b>")
+    await sender.send_media(-100, "video", "BAV", None)
+    await sender.send_media(-100, "animation", "CgA", "gif")
+    assert [
+        (n, k.get("photo") or k.get("video") or k.get("animation"), k["caption"]) for n, k in bot.calls
+    ] == [
+        ("photo", "AgP", "<b>a</b>"),
+        ("video", "BAV", None),
+        ("animation", "CgA", "gif"),
+    ]
+    assert all(k["parse_mode"] == "HTML" for _, k in bot.calls)
+    with pytest.raises(ValueError):
+        await sender.send_media(-100, "sticker", "x", None)

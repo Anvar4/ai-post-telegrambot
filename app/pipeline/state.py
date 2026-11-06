@@ -36,6 +36,7 @@ class PostKind(StrEnum):
     QUIZ = "quiz"
     DIGEST = "digest"
     QA = "qa"
+    MANUAL = "manual"  # admin oʻzi yuklagan post (matn / rasm / video)
 
 
 S = PostStatus

@@ -1,4 +1,4 @@
-"""Postni Telegram xabarlariga aylantirish (rasm + caption, uzun matn, so'rovnoma)."""
+"""Postni Telegram xabarlariga aylantirish (rasm + caption, media, uzun matn, so'rovnoma)."""
 
 from __future__ import annotations
 
@@ -13,16 +13,26 @@ from app.pipeline.state import PostKind
 
 @dataclass
 class OutboundMessage:
-    kind: Literal["photo", "text", "poll"]
+    kind: Literal["photo", "media", "text", "poll"]
     text: str | None = None
     photo: bytes | None = None
     poll: dict[str, Any] | None = None
+    media: dict[str, str] | None = None  # {"type": photo|video|animation, "file_id": ...}
 
 
 def compose(post: Post, image: bytes | None) -> list[OutboundMessage]:
     if post.kind in (PostKind.POLL, PostKind.QUIZ) and (post.extra or {}).get("poll"):
         return [OutboundMessage("poll", poll=dict(post.extra["poll"]))]
     text = (post.text_html or "").strip()
+    media = (post.extra or {}).get("media")
+    if media:
+        # Qoʻlda post: Telegram'dagi fayl; uzun matn — media dan keyin alohida xabar
+        if visible_length(text) <= CAPTION_LIMIT:
+            return [OutboundMessage("media", text=text or None, media=dict(media))]
+        return [
+            OutboundMessage("media", media=dict(media)),
+            OutboundMessage("text", text=truncate_visible(text, MESSAGE_LIMIT)),
+        ]
     if image:
         if visible_length(text) <= CAPTION_LIMIT:
             return [OutboundMessage("photo", text=text, photo=image)]

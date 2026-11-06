@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time, timedelta
+import re
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 DEFAULT_TZ = "Asia/Tashkent"
@@ -37,6 +38,33 @@ def day_bounds(dt: datetime, name: str = DEFAULT_TZ) -> tuple[datetime, datetime
 def parse_hhmm(value: str) -> time:
     hh, mm = value.strip().split(":")
     return time(int(hh), int(mm))
+
+
+_WHEN_RE = re.compile(
+    r"^(?:(?P<d>\d{1,2})\.(?P<m>\d{1,2})(?:\.(?P<y>\d{4}))?\s+)?(?P<hh>\d{1,2}):(?P<mm>\d{2})$"
+)
+
+
+def parse_when(text: str, now: datetime) -> datetime | None:
+    """Admin yozgan vaqt: `HH:MM` (bugun, oʻtgan boʻlsa ertaga), `DD.MM HH:MM`, `DD.MM.YYYY HH:MM`.
+
+    `now` — mahalliy (aware) vaqt; natija shu zonada. Notoʻgʻri yoki oʻtgan sana — None.
+    """
+    m = _WHEN_RE.match(text.strip())
+    if m is None:
+        return None
+    try:
+        at = time(int(m["hh"]), int(m["mm"]))
+        if m["d"] is None:
+            result = datetime.combine(now.date(), at, tzinfo=now.tzinfo)
+            return result if result > now else result + timedelta(days=1)
+        year = int(m["y"]) if m["y"] else now.year
+        result = datetime.combine(date(year, int(m["m"]), int(m["d"])), at, tzinfo=now.tzinfo)
+        if result <= now and not m["y"]:
+            result = result.replace(year=year + 1)
+    except ValueError:
+        return None
+    return result if result > now else None
 
 
 def in_quiet_hours(

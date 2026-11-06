@@ -197,6 +197,24 @@ class FakeSender:
             Sent("photo", chat_id, text=caption, photo=photo, kwargs={"reply_markup": reply_markup})
         )
 
+    async def send_media(
+        self,
+        chat_id: int,
+        media_type: str,
+        file_id: str,
+        caption: str | None = None,
+        *,
+        reply_markup: Any = None,
+    ) -> int:
+        return self._record(
+            Sent(
+                "media",
+                chat_id,
+                text=caption,
+                kwargs={"media_type": media_type, "file_id": file_id, "reply_markup": reply_markup},
+            )
+        )
+
     async def send_poll(
         self,
         chat_id: int,

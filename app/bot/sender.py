@@ -20,6 +20,7 @@ from aiogram.types import (
 )
 
 T = TypeVar("T")
+MEDIA_TYPES = ("photo", "video", "animation")
 
 
 class TelegramSender(Protocol):
@@ -35,6 +36,16 @@ class TelegramSender(Protocol):
 
     async def send_photo(
         self, chat_id: int, photo: bytes, caption: str | None = None, *, reply_markup: Any = None
+    ) -> int: ...
+
+    async def send_media(
+        self,
+        chat_id: int,
+        media_type: str,
+        file_id: str,
+        caption: str | None = None,
+        *,
+        reply_markup: Any = None,
     ) -> int: ...
 
     async def send_poll(
@@ -146,6 +157,29 @@ class AiogramSender:
             ),
         )
         return msg.message_id
+
+    async def send_media(
+        self,
+        chat_id: int,
+        media_type: str,
+        file_id: str,
+        caption: str | None = None,
+        *,
+        reply_markup: Any = None,
+    ) -> int:
+        """Telegram'dagi fayl (file_id) bilan rasm / video / animatsiya yuborish."""
+        if media_type not in MEDIA_TYPES:
+            raise ValueError(f"media turi qoʻllab-quvvatlanmaydi: {media_type}")
+        method = getattr(self.bot, f"send_{media_type}")
+        kwargs: dict[str, Any] = {
+            "chat_id": chat_id,
+            media_type: file_id,
+            "caption": caption,
+            "parse_mode": "HTML",
+            "reply_markup": reply_markup,
+        }
+        msg = await self._send(chat_id, lambda: method(**kwargs))
+        return int(msg.message_id)
 
     async def send_poll(
         self,

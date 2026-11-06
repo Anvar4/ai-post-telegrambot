@@ -88,6 +88,9 @@ class Publisher:
             for msg in messages:
                 if msg.kind == "photo":
                     mid = await self.sender.send_photo(chat_id, msg.photo or b"", msg.text)
+                elif msg.kind == "media":
+                    media = msg.media or {}
+                    mid = await self.sender.send_media(chat_id, media["type"], media["file_id"], msg.text)
                 elif msg.kind == "poll":
                     poll = msg.poll or {}
                     mid, poll_id = await self.sender.send_poll(

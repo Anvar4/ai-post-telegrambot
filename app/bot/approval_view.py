@@ -5,12 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from aiogram.types import InlineKeyboardMarkup
 from loguru import logger
 
-from app.bot.keyboards import approval_keyboard
+from app.bot.keyboards import approval_keyboard, manual_keyboard
 from app.content.formatting import escape, visible_length
 from app.content.limits import CAPTION_LIMIT, MESSAGE_LIMIT
 from app.db.models import Post
+from app.pipeline.compose import compose
+from app.pipeline.slots import free_slots
 from app.pipeline.state import PostKind
 from app.utils.timeutil import to_tz, utcnow
 
@@ -27,7 +30,9 @@ KIND_UZ = {
     "quiz": "test",
     "digest": "dayjest",
     "qa": "savol-javob",
+    "manual": "qoʻlda post",
 }
+MEDIA_UZ = {"photo": "rasm", "video": "video", "animation": "GIF"}
 
 
 def _load(path: str | None) -> bytes | None:
@@ -78,9 +83,41 @@ def info_text(post: Post, tz: str) -> str:
     return "\n".join(lines)[:MESSAGE_LIMIT]
 
 
+async def manual_prompt(ctx: AppContext, post: Post) -> tuple[str, InlineKeyboardMarkup]:
+    """Qoʻlda post uchun "qachon chiqarilsin?" matni va tugmalari (keyingi 3 ta boʻsh slot)."""
+    media = (post.extra or {}).get("media")
+    what = MEDIA_UZ.get(media["type"], media["type"]) if media else "matn"
+    when = (
+        to_tz(post.scheduled_at, ctx.settings.tz).strftime("%d.%m %H:%M")
+        if post.scheduled_at and post.status == "SCHEDULED"
+        else "vaqt tanlanmagan"
+    )
+    text = f"🗂 <b>Qoʻlda post #{post.id}</b> · {what} · ⏰ {when}\nQachon chiqarilsin?"
+    slots = [t for t, _ in await free_slots(ctx)]
+    return text, manual_keyboard(post.id, slots, ctx.settings.tz)  # type: ignore[arg-type]
+
+
+async def _send_manual(ctx: AppContext, post: Post) -> None:
+    """Qoʻlda post: kanalda qanday chiqsa, xuddi shunday koʻrinish + vaqt tugmalari."""
+    info, kb = await manual_prompt(ctx, post)
+    for admin_id in ctx.settings.admin_ids:
+        try:
+            for msg in compose(post, None):
+                if msg.kind == "media" and msg.media:
+                    await ctx.sender.send_media(admin_id, msg.media["type"], msg.media["file_id"], msg.text)
+                else:
+                    await ctx.sender.send_message(admin_id, msg.text or "")
+            await ctx.sender.send_message(admin_id, info, reply_markup=kb)
+        except Exception as exc:
+            logger.warning("Qoʻlda post koʻrinishi yuborilmadi ({}): {}", admin_id, exc)
+
+
 async def send_for_approval(ctx: AppContext, post_id: int) -> None:
     post = await ctx.repo.posts.get(post_id)
     if post is None:
+        return
+    if post.kind == PostKind.MANUAL:
+        await _send_manual(ctx, post)
         return
     post.approval_sent_at = utcnow()
     await ctx.repo.posts.update(post_id, {"approval_sent_at": post.approval_sent_at})

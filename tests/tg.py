@@ -9,7 +9,7 @@ from typing import Any
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import AnswerCallbackQuery, SendMessage, SendPhoto, TelegramMethod
-from aiogram.types import CallbackQuery, Chat, Message, Update, User
+from aiogram.types import CallbackQuery, Chat, InlineKeyboardMarkup, Message, Update, User
 
 
 class RecordingSession(BaseSession):
@@ -67,6 +67,17 @@ def msg_update(
     )
 
 
+def media_update(user_id: int, *, chat_type: str = "private", **media: Any) -> Update:
+    """Rasm/video/animatsiya xabari (matnsiz; caption va caption_entities ixtiyoriy)."""
+    n = next(_uid)
+    chat = Chat(id=user_id, type=chat_type)
+    user = User(id=user_id, is_bot=False, first_name="Test")
+    return Update(
+        update_id=n,
+        message=Message(message_id=n, date=datetime.now(UTC), chat=chat, from_user=user, **media),
+    )
+
+
 def callback_update(data: str, user_id: int, *, chat_id: int | None = None) -> Update:
     n = next(_uid)
     chat = Chat(id=chat_id if chat_id is not None else user_id, type="private")
@@ -92,3 +103,19 @@ def sent_texts(bot: Bot) -> list[str]:
 def callback_answers(bot: Bot) -> list[str]:
     session: RecordingSession = bot.session  # type: ignore[assignment]
     return [m.text or "" for m in session.requests if isinstance(m, AnswerCallbackQuery)]
+
+
+def last_markup(bot: Bot) -> InlineKeyboardMarkup | None:
+    """Bot yuborgan oxirgi inline klaviatura (handler javoblari orasidan)."""
+    session: RecordingSession = bot.session  # type: ignore[assignment]
+    for m in reversed(session.requests):
+        markup = getattr(m, "reply_markup", None)
+        if isinstance(markup, InlineKeyboardMarkup):
+            return markup
+    return None
+
+
+def button_data(markup: Any) -> dict[str, str]:
+    """Tugma matni -> callback_data."""
+    assert markup is not None, "klaviatura yoʻq"
+    return {b.text: b.callback_data for row in markup.inline_keyboard for b in row if b.callback_data}

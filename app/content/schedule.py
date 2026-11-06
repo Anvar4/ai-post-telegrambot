@@ -53,17 +53,24 @@ def slot_datetime(day: date, hhmm: str, tz: str = DEFAULT_TZ) -> datetime:
     return datetime.combine(day, parse_hhmm(hhmm), tzinfo=ZoneInfo(tz))
 
 
-def upcoming_slot_times(
+def upcoming_slots(
     now: datetime, slots: dict[str, str], tz: str = DEFAULT_TZ, days: int = 2
-) -> list[datetime]:
-    """`now` dan keyingi slot vaqtlari (Toshkent vaqtida, o'sish tartibida)."""
+) -> list[tuple[datetime, str]]:
+    """`now` dan keyingi slotlar: (vaqt Toshkent zonasida, slot nomi), o'sish tartibida."""
     local = now.astimezone(ZoneInfo(tz))
-    out: list[datetime] = []
+    out: list[tuple[datetime, str]] = []
     for d in range(days + 1):
         day = local.date() + timedelta(days=d)
         for name in SLOT_NAMES:
             if name in slots:
                 dt = slot_datetime(day, slots[name], tz)
                 if dt > local:
-                    out.append(dt)
+                    out.append((dt, name))
     return sorted(out)
+
+
+def upcoming_slot_times(
+    now: datetime, slots: dict[str, str], tz: str = DEFAULT_TZ, days: int = 2
+) -> list[datetime]:
+    """`now` dan keyingi slot vaqtlari (Toshkent vaqtida, o'sish tartibida)."""
+    return [dt for dt, _ in upcoming_slots(now, slots, tz, days)]
