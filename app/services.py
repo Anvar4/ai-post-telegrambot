@@ -12,6 +12,10 @@ def _secret(value: object) -> str | None:
 
 def register_services(ctx: AppContext) -> None:
     """Barcha servislarni `ctx.services` ga joylaydi."""
+    from app.analytics.growth import GrowthService
+    from app.analytics.invites import InviteService
+    from app.analytics.metrics import MetricsService
+    from app.analytics.reports import ReportService
     from app.collectors.service import CollectorService
     from app.interactive.moderation import ModerationService
     from app.interactive.polls import PollService
@@ -30,6 +34,10 @@ def register_services(ctx: AppContext) -> None:
     ctx.services["quizzes"] = QuizService(ctx)
     ctx.services["qa"] = QAService(ctx)
     ctx.services["moderation"] = ModerationService(ctx)
+    ctx.services["metrics"] = MetricsService(ctx)
+    ctx.services["invites"] = InviteService(ctx)
+    ctx.services["reports"] = ReportService(ctx)
+    ctx.services["growth"] = GrowthService(ctx)
     ctx.services["publisher"] = Publisher(ctx.repo, ctx.sender, s, ctx.notifier, runtime=ctx.runtime)
     if ctx.http is not None:
         ctx.services["collector"] = CollectorService(

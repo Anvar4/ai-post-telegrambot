@@ -51,9 +51,6 @@ async def on_group_message(message: Message, ctx: AppContext, bot: Bot) -> None:
         return
     text = message.text or message.caption or ""
     reply = message.reply_to_message
-    if metrics is not None and reply is not None:
-        await metrics.on_comment(reply.message_id if reply.is_automatic_forward else None, message)
-
     if moderation is not None:
         has_link = any(
             e.type in LINK_ENTITY_TYPES for e in (message.entities or message.caption_entities or [])
@@ -70,6 +67,15 @@ async def on_group_message(message: Message, ctx: AppContext, bot: Bot) -> None:
         )
         if result.action != "none":
             return
+
+    if metrics is not None:
+        root = (
+            reply.message_id
+            if reply is not None and reply.is_automatic_forward
+            else message.message_thread_id
+        )
+        if root:
+            await metrics.on_comment(root)
 
     qa = ctx.services.get("qa")
     if qa is None or not text:
