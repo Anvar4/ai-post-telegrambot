@@ -428,6 +428,34 @@ class Pipeline:
         await self._make_image(post_id)
         await send_for_approval(self.ctx, post_id)
 
+    async def prepare_custom(
+        self,
+        kind: PostKind | str,
+        *,
+        source_text: str,
+        story_title: str,
+        category: str,
+        scheduled_at: datetime | None = None,
+        force_approval: bool = False,
+        created_by: str = "ai",
+    ) -> int | None:
+        """Manbasiz maxsus post (masalan, haftalik savol-javob)."""
+        pid = await self._new_post(
+            PostKind(kind),
+            story_id=None,
+            slot=None,
+            scheduled_at=scheduled_at,
+            created_by=created_by,
+            source_urls=[],
+            score=None,
+            extra={
+                "category": category,
+                "source_text": source_text[:SOURCE_TEXT_LIMIT],
+                "story_title": story_title,
+            },
+        )
+        return await self._draft(pid, force_approval=force_approval)
+
     # ------------------------------------------------------------------ haftalik dayjest
 
     def post_link(self, post: Post) -> str | None:

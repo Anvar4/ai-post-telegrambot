@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
@@ -38,4 +38,21 @@ def create_router() -> Router:
     router.message.register(cmd_start, Command("start", "help"))
     router.message.register(other_command, F.text.startswith("/"))
     router.message.register(on_question, F.text)
+    return router
+
+
+async def on_channel_dm(message: Message, ctx: AppContext, bot: Bot) -> None:
+    """Kanalning direct messages chati (Bot API 9.2): javob o'sha mavzu (topic) ichida."""
+    qa = ctx.services.get("qa")
+    if qa is None or not message.from_user or not message.text or message.from_user.is_bot:
+        return
+    answer = await qa.answer(message.from_user.id, message.text, "channel_dm")
+    topic = message.direct_messages_topic.topic_id if message.direct_messages_topic else None
+    await bot.send_message(chat_id=message.chat.id, text=answer, direct_messages_topic_id=topic)
+
+
+def create_dm_router() -> Router:
+    router = Router(name="channel_dm")
+    router.message.filter(F.chat.is_direct_messages.is_(True))
+    router.message.register(on_channel_dm, F.text)
     return router

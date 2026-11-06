@@ -131,6 +131,11 @@ async def run() -> None:
     except ImportError:
         logger.warning("Scheduler moduli topilmadi — faqat bot rejimi")
     try:
+        try:
+            me = await bot.me()
+            ctx.services["bot_username"] = me.username or ""
+        except Exception as exc:
+            logger.error("Bot ma'lumotini olib bo'lmadi (token to'g'rimi?): {}", exc)
         await _startup_checks(ctx)
         logger.info("Bot polling boshlandi")
         await dp.start_polling(bot, allowed_updates=ALLOWED_UPDATES)

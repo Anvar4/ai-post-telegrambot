@@ -7,7 +7,7 @@ from collections.abc import Callable
 from aiogram import Dispatcher, Router
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from app.bot.handlers import admin, admin_content, approval, qa
+from app.bot.handlers import admin, admin_content, approval, group, qa
 from app.bot.middlewares import on_error
 from app.context import AppContext
 
@@ -33,6 +33,8 @@ def build_dispatcher(ctx: AppContext) -> Dispatcher:
         approval.create_router(),
         admin.create_router(),
         admin_content.create_router(),
+        qa.create_dm_router(),
+        group.create_router(),
         *(factory() for factory in _router_factories()),
         qa.create_router(),
     ]
@@ -47,12 +49,6 @@ def _router_factories() -> list[Callable[[], Router]]:
         from app.bot.handlers import updates  # type: ignore[attr-defined]
 
         factories.append(updates.create_router)
-    except ImportError:
-        pass
-    try:
-        from app.bot.handlers import group  # type: ignore[attr-defined]
-
-        factories.append(group.create_router)
     except ImportError:
         pass
     return [*factories, *EXTRA_ROUTERS]

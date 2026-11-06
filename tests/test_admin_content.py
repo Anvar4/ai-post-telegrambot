@@ -131,3 +131,22 @@ async def test_digest_command(ctx) -> None:
     dp, bot = dispatcher(ctx)
     await dp.feed_update(bot, msg_update("/digest", ADMIN))
     assert ctx.services["pipeline"].digests == 1
+
+
+class FakeInteractive:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str | None, str]] = []
+
+    async def create(self, topic, *, created_by="ai", **kw):
+        self.calls.append((topic, created_by))
+        return 7
+
+
+async def test_poll_and_quiz_commands(ctx) -> None:
+    dp, bot = dispatcher(ctx)
+    ctx.services["polls"] = FakeInteractive()
+    ctx.services["quizzes"] = FakeInteractive()
+    await dp.feed_update(bot, msg_update("/poll brauzerlar", ADMIN))
+    await dp.feed_update(bot, msg_update("/quiz", ADMIN))
+    assert ctx.services["polls"].calls == [("brauzerlar", "admin")]
+    assert ctx.services["quizzes"].calls == [(None, "admin")]

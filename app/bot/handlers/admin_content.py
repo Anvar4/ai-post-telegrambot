@@ -293,6 +293,27 @@ async def cmd_digest(message: Message, ctx: AppContext) -> None:
         await message.answer("ℹ️ Dayjest tayyorlanmadi (postlar yetarli emas yoki tekshiruvdan oʻtmadi).")
 
 
+# ---------------------------------------------------------------- so'rovnoma va test
+
+
+async def _interactive(
+    message: Message, command: CommandObject, ctx: AppContext, service: str, label: str
+) -> None:
+    topic = (command.args or "").strip() or None
+    await message.answer(f"⏳ {label} tayyorlanmoqda… qoralama shu yerga keladi.")
+    pid = await ctx.service(service).create(topic, created_by="admin")
+    if pid is None:
+        await message.answer(f"❌ {label} tayyorlanmadi (tekshiruvdan oʻtmadi).")
+
+
+async def cmd_poll(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    await _interactive(message, command, ctx, "polls", "Soʻrovnoma")
+
+
+async def cmd_quiz(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    await _interactive(message, command, ctx, "quizzes", "Test")
+
+
 MENU_HANDLERS.update({"queue": queue_text, "sources": sources_text, "settings": settings_text})
 
 
@@ -309,5 +330,7 @@ def create_router() -> Router:
     router.message.register(cmd_settings, Command("settings"))
     router.message.register(cmd_set, Command("set"))
     router.message.register(cmd_digest, Command("digest"))
+    router.message.register(cmd_poll, Command("poll"))
+    router.message.register(cmd_quiz, Command("quiz"))
     router.callback_query.register(on_source_toggle, SourceCB.filter())
     return router
