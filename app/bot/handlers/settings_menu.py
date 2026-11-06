@@ -40,6 +40,7 @@ async def main_view(ctx: AppContext) -> tuple[str, InlineKeyboardMarkup]:
     cats = list(await rt.get("categories"))
     polls, quizzes = int(await rt.get("polls_per_week")), int(await rt.get("quizzes_per_week"))
     image_mode = str(await rt.get("image_mode"))
+    share = bool(await rt.get("share_button"))
     names = ", ".join(CATEGORY_LABELS[c].split(" ", 1)[1] for c in cats if c in CATEGORY_LABELS)
     text = "\n".join(
         [
@@ -49,6 +50,7 @@ async def main_view(ctx: AppContext) -> tuple[str, InlineKeyboardMarkup]:
             f"🗂 Turkumlar: {names}",
             f"📊 Soʻrovnoma: haftasiga <b>{polls}</b> · ❓ Test: haftasiga <b>{quizzes}</b>",
             f"🖼 Rasm: {IMAGE_MODE_UZ.get(image_mode, image_mode)}",
+            f"📤 Ulashish tugmasi: {'yoqilgan' if share else 'oʻchirilgan'}",
             "",
             "Tugmalar bilan oʻzgartiring. Matn bilan: <code>/set kalit qiymat</code>.",
         ]
@@ -58,6 +60,7 @@ async def main_view(ctx: AppContext) -> tuple[str, InlineKeyboardMarkup]:
         [_b("📊 −", "pl", "-"), _b(f"📊 Soʻrovnoma: {polls}/hafta", "noop"), _b("📊 +", "pl", "+")],
         [_b("❓ −", "qz", "-"), _b(f"❓ Test: {quizzes}/hafta", "noop"), _b("❓ +", "qz", "+")],
         [_b(f"🖼 Rasm: {IMAGE_MODE_UZ.get(image_mode, image_mode)}", "img")],
+        [_b(f"📤 Ulashish tugmasi: {'✅' if share else '▫️'}", "share")],
         [_b("🔧 Boshqa sozlamalar", "all")],
     ]
     return text, InlineKeyboardMarkup(inline_keyboard=kb)
@@ -159,6 +162,8 @@ async def on_settings(call: CallbackQuery, callback_data: SettingsCB, ctx: AppCo
             else IMAGE_MODES[0]
         )
         await ctx.runtime.set("image_mode", nxt)
+    elif action == "share":
+        await ctx.runtime.set("share_button", not await ctx.runtime.get("share_button"))
     elif action == "all":
         await call.answer()
         if call.message is not None:

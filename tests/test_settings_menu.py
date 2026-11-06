@@ -131,3 +131,12 @@ async def test_set_image_mode_validated(ctx) -> None:
     assert await ctx.runtime.get("image_mode") == "none"
     await dp.feed_update(bot, msg_update("/set image_mode chiroyli", ADMIN))
     assert await ctx.runtime.get("image_mode") == "none"
+
+
+async def test_share_button_toggle(ctx) -> None:
+    dp, bot = dispatcher(ctx)
+    await dp.feed_update(bot, msg_update("/settings", ADMIN))
+    await press(dp, bot, "📤")
+    assert await ctx.runtime.get("share_button") is False
+    await press(dp, bot, "📤")
+    assert await ctx.runtime.get("share_button") is True

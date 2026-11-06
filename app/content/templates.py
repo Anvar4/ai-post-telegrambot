@@ -128,6 +128,15 @@ KIND_LABEL: dict[PostKind, str] = {
 SHARE_CTA = "📢 Foydali boʻlsa, doʻstlaringizga ulashing!"
 
 
+def telegram_post_link(chat_id: int, message_id: int, *, channel_id: int | None, username: str) -> str:
+    """Kanal postiga havola: ochiq kanal — t.me/username/ID, aks holda (test kanal) — t.me/c/ID/ID."""
+    name = username.lstrip("@")
+    if name and chat_id == channel_id:
+        return f"https://t.me/{name}/{message_id}"
+    internal = str(abs(chat_id)).removeprefix("100")
+    return f"https://t.me/c/{internal}/{message_id}"
+
+
 def render_footer(username: str) -> str:
     return f"👉 {username}" if username else ""
 

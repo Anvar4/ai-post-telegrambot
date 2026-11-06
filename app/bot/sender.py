@@ -62,6 +62,8 @@ class TelegramSender(Protocol):
 
     async def stop_poll(self, chat_id: int, message_id: int) -> dict[str, Any]: ...
 
+    async def edit_reply_markup(self, chat_id: int, message_id: int, reply_markup: Any) -> None: ...
+
     async def member_count(self, chat_id: int) -> int: ...
 
     async def delete_message(self, chat_id: int, message_id: int) -> None: ...
@@ -212,6 +214,14 @@ class AiogramSender:
             "options": [{"text": o.text, "voter_count": o.voter_count} for o in poll.options],
             "total_voter_count": poll.total_voter_count,
         }
+
+    async def edit_reply_markup(self, chat_id: int, message_id: int, reply_markup: Any) -> None:
+        await self._send(
+            chat_id,
+            lambda: self.bot.edit_message_reply_markup(
+                chat_id=chat_id, message_id=message_id, reply_markup=reply_markup
+            ),
+        )
 
     async def member_count(self, chat_id: int) -> int:
         return await self.bot.get_chat_member_count(chat_id=chat_id)

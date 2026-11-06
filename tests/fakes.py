@@ -154,6 +154,8 @@ class FakeSender:
         self.members = member_count
         self.invite_links: list[str] = []
         self.on_send: Callable[[Sent], None] | None = None
+        self.markups: list[tuple[int, int, Any]] = []
+        self.fail_markup = False
 
     def _maybe_fail(self) -> None:
         if self.fail_times > 0:
@@ -245,6 +247,11 @@ class FakeSender:
     async def stop_poll(self, chat_id: int, message_id: int) -> dict[str, Any]:
         self.stopped.append((chat_id, message_id))
         return {"options": [], "total_voter_count": 0}
+
+    async def edit_reply_markup(self, chat_id: int, message_id: int, reply_markup: Any) -> None:
+        if self.fail_markup:
+            raise RuntimeError("message is not modified")
+        self.markups.append((chat_id, message_id, reply_markup))
 
     async def member_count(self, chat_id: int) -> int:
         return self.members

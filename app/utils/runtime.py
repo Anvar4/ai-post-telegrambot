@@ -24,6 +24,7 @@ RUNTIME_DEFAULTS: dict[str, Any] = {
     "image_review": True,
     "image_mode": "search_then_ask",  # search_then_ask | ai | none
     "share_cta_every": 6,
+    "share_button": True,  # nashrdan keyin "📤 Ulashish" tugmasi
     "breaking_min_score": 85,
     "min_score": 50,
     "category_daily_cap": 2,

@@ -18,7 +18,7 @@ from app.collectors.dedupe import title_similarity
 from app.collectors.extract import extract_text
 from app.content.formatting import normalize_uz, sanitize_html
 from app.content.schedule import plan_day
-from app.content.templates import render_footer
+from app.content.templates import render_footer, telegram_post_link
 from app.db.models import Post, Story
 from app.pipeline.check import Checker
 from app.pipeline.select import Selector
@@ -551,11 +551,12 @@ class Pipeline:
     def post_link(self, post: Post) -> str | None:
         if not post.message_id or not post.chat_id:
             return None
-        username = self.ctx.settings.channel_username.lstrip("@")
-        if username and post.chat_id == self.ctx.settings.channel_id:
-            return f"https://t.me/{username}/{post.message_id}"
-        internal = str(abs(post.chat_id)).removeprefix("100")
-        return f"https://t.me/c/{internal}/{post.message_id}"
+        return telegram_post_link(
+            post.chat_id,
+            post.message_id,
+            channel_id=self.ctx.settings.channel_id,
+            username=self.ctx.settings.channel_username,
+        )
 
     async def prepare_digest(self, scheduled_at: datetime | None, *, min_posts: int = 3) -> int | None:
         now = self.clock()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from urllib.parse import urlencode
 
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -27,7 +28,7 @@ class ManualCB(CallbackData, prefix="mp"):
 
 
 class SettingsCB(CallbackData, prefix="st"):
-    action: str  # view | t (vaqt) | c (turkum) | pl | qz | img | all | noop
+    action: str  # view | t (vaqt) | c (turkum) | pl | qz | img | share | all | noop
     value: str = ""
 
 
@@ -109,6 +110,13 @@ def manual_keyboard(post_id: int, slots: Sequence[datetime], tz: str) -> InlineK
     rows += [slot_buttons[i : i + 2] for i in range(0, len(slot_buttons), 2)]
     rows.append([b("⏰ Boshqa vaqt", "other"), b("❌ Bekor qilish", "cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def share_keyboard(link: str, text: str = "") -> InlineKeyboardMarkup:
+    """Telegram'ning "ulashish" oynasi: postga havola + qisqa matn."""
+    query = urlencode({"url": link, "text": text} if text else {"url": link})
+    button = InlineKeyboardButton(text="📤 Ulashish", url=f"https://t.me/share/url?{query}")
+    return InlineKeyboardMarkup(inline_keyboard=[[button]])
 
 
 def ban_keyboard(chat_id: int, user_id: int) -> InlineKeyboardMarkup:

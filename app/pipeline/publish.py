@@ -11,7 +11,7 @@ from loguru import logger
 
 from app.content.formatting import visible_length
 from app.content.limits import CAPTION_LIMIT
-from app.content.templates import SHARE_CTA
+from app.content.templates import SHARE_CTA, telegram_post_link
 from app.db.models import Post
 from app.pipeline.compose import compose
 from app.pipeline.state import PostKind, PostStatus, transition
@@ -83,6 +83,7 @@ class Publisher:
         messages = compose(post, self._load_image(post.image_path))
 
         first_id: int | None = None
+        last_id: int | None = None
         poll_id: str | None = None
         try:
             for msg in messages:
@@ -104,6 +105,7 @@ class Publisher:
                     )
                 else:
                     mid = await self.sender.send_message(chat_id, msg.text or "")
+                last_id = mid
                 if first_id is None:
                     first_id = mid
                     await self.repo.posts.update(post_id, {"message_id": mid})
@@ -118,6 +120,8 @@ class Publisher:
         await self.repo.posts.save(post)
         if poll_id:
             await self._attach_poll(post_id, poll_id)
+        elif first_id is not None and last_id is not None:
+            await self._add_share_button(post, chat_id, first_id, last_id)
         logger.info("Post #{} chiqarildi (chat {}, message {})", post_id, chat_id, first_id)
         if self.on_published:
             try:
@@ -125,6 +129,25 @@ class Publisher:
             except Exception:
                 logger.exception("on_published xatosi")
         return True
+
+    async def _add_share_button(self, post: Post, chat_id: int, first_id: int, last_id: int) -> None:
+        """Oxirgi xabarga "📤 Ulashish" tugmasi (postning birinchi xabariga havola); xato nashrni buzmaydi."""
+        if self.runtime is None or not await self.runtime.get("share_button"):
+            return
+        link = telegram_post_link(
+            chat_id,
+            first_id,
+            channel_id=self.settings.channel_id,
+            username=self.settings.channel_username,
+        )
+        from app.bot.keyboards import share_keyboard
+
+        try:
+            await self.sender.edit_reply_markup(
+                chat_id, last_id, share_keyboard(link, post.title_short or "")
+            )
+        except Exception as exc:
+            logger.warning("Post #{} ga ulashish tugmasi qoʻshilmadi: {}", post.id, exc)
 
     async def _attach_poll(self, post_id: int, poll_id: str) -> None:
         poll = await self.repo.polls.find_one({"post_id": post_id})
