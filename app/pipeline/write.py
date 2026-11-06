@@ -134,7 +134,7 @@ async def draft_with_checks(
             kind,
             source_text=source_text,
             story_title=story_title,
-            source_urls=source_urls,
+            source_urls=[*source_urls, *extra_allowed],
             source_name=source_name,
             instructions=instructions,
             previous=previous,
@@ -150,6 +150,7 @@ async def draft_with_checks(
         allowed=allowed,
         has_image=has_image,
         risk_flags=risk_flags,
+        source_urls=[*source_urls, *extra_allowed],
     )
     rounds = 0
     while report.verdict == "fix" and rounds < max_fixes:
@@ -163,6 +164,7 @@ async def draft_with_checks(
             allowed=allowed,
             has_image=has_image,
             risk_flags=risk_flags,
+            source_urls=[*source_urls, *extra_allowed],
         )
     if report.verdict == "fix":
         report.needs_approval = True

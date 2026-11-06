@@ -26,6 +26,7 @@ from app.pipeline.check import Checker
 from app.pipeline.select import Selector
 from app.pipeline.state import PostKind, PostStatus, transition
 from app.pipeline.write import DraftResult, Writer, draft_with_checks
+from app.utils.security import mask_secrets
 from app.utils.timeutil import parse_hhmm, shift_out_of_quiet, to_tz, utcnow
 
 if TYPE_CHECKING:
@@ -124,6 +125,29 @@ class Pipeline:
                 return None
             story.status = "used"
             await s.commit()
+        material = await self.story_material(story_id)
+        pid = await self._new_post(
+            kind,
+            story_id=story.id,
+            slot=slot,
+            scheduled_at=scheduled_at,
+            created_by=created_by,
+            source_urls=material["urls"],
+            score=story.score,
+            extra={
+                "category": story.category,
+                "why_uz": story.why_uz,
+                "risk_flags": list(story.risk_flags or []),
+                "source_text": material["source_text"][:SOURCE_TEXT_LIMIT],
+                "extra_allowed": material["extra_allowed"],
+                "story_title": story.title,
+                "source_name": material["source_name"],
+            },
+        )
+        return await self._draft(pid, force_approval=force_approval, instructions=instructions)
+
+    async def story_material(self, story_id: int) -> dict[str, Any]:
+        """Story uchun manba havolalari, qo'shimcha ruxsat etilgan havolalar, manba nomi va matni."""
         rows = await self._source_rows(story_id)
         urls: list[str] = []
         extra_allowed: list[str] = []
@@ -134,27 +158,12 @@ class Pipeline:
             for key in ("cisa_url", "homepage", "hn_url"):
                 if extra.get(key):
                     extra_allowed.append(str(extra[key]))
-        source_name = next((src.name for _a, src in rows if src is not None), None)
-        source_text = await self._source_text(rows)
-        pid = await self._new_post(
-            kind,
-            story_id=story.id,
-            slot=slot,
-            scheduled_at=scheduled_at,
-            created_by=created_by,
-            source_urls=urls,
-            score=story.score,
-            extra={
-                "category": story.category,
-                "why_uz": story.why_uz,
-                "risk_flags": list(story.risk_flags or []),
-                "source_text": source_text[:SOURCE_TEXT_LIMIT],
-                "extra_allowed": extra_allowed,
-                "story_title": story.title,
-                "source_name": source_name,
-            },
-        )
-        return await self._draft(pid, force_approval=force_approval, instructions=instructions)
+        return {
+            "urls": urls,
+            "extra_allowed": extra_allowed,
+            "source_name": next((src.name for _a, src in rows if src is not None), None),
+            "source_text": await self._source_text(rows),
+        }
 
     async def _source_rows(self, story_id: int) -> list[Any]:
         """Story maqolalari va manbalari (ishonchli manba birinchi)."""
@@ -228,19 +237,23 @@ class Pipeline:
             return None
         extra = post.extra or {}
         kind = PostKind(post.kind)
-        res: DraftResult = await draft_with_checks(
-            self.writer,
-            self.checker,
-            kind,
-            source_text=extra.get("source_text", ""),
-            story_title=extra.get("story_title") or post.title_short or "",
-            source_urls=post.source_urls or [],
-            source_name=extra.get("source_name"),
-            has_image=self.ctx.services.get("images") is not None,
-            risk_flags=extra.get("risk_flags", []),
-            instructions=instructions,
-            extra_allowed=extra.get("extra_allowed", []),
-        )
+        try:
+            res: DraftResult = await draft_with_checks(
+                self.writer,
+                self.checker,
+                kind,
+                source_text=extra.get("source_text", ""),
+                story_title=extra.get("story_title") or post.title_short or "",
+                source_urls=post.source_urls or [],
+                source_name=extra.get("source_name"),
+                has_image=self.ctx.services.get("images") is not None,
+                risk_flags=extra.get("risk_flags", []),
+                instructions=instructions,
+                extra_allowed=extra.get("extra_allowed", []),
+            )
+        except Exception as exc:
+            await self._mark_failed(post_id, exc)
+            return None
         report = res.report
         admin_flow = force_approval or post.created_by == "admin"
         async with self.ctx.repo.session() as s:
@@ -273,6 +286,20 @@ class Pipeline:
         await self._make_image(post_id)
         await self.after_check(post_id)
         return post_id
+
+    async def _mark_failed(self, post_id: int, exc: BaseException) -> None:
+        """AI xatosi tufayli qoralama tayyorlanmadi: post FAILED, adminga xabar (post osilib qolmaydi)."""
+        err = mask_secrets(f"{type(exc).__name__}: {exc}")[:400]
+        logger.warning("Post #{} qoralamasi tayyorlanmadi: {}", post_id, err)
+        async with self.ctx.repo.session() as s:
+            post = await s.get(Post, post_id)
+            if post is not None and post.status not in (S.PUBLISHED, S.REJECTED, S.EXPIRED, S.FAILED):
+                await transition(s, post, S.FAILED, "pipeline", error=err)
+                await s.commit()
+        await self.ctx.repo.audit("pipeline", "error", message=f"Post #{post_id}: {err}")
+        await self.ctx.notifier.notify(
+            f"⚠️ Post #{post_id} qoralamasi tayyorlanmadi: {err}", key=f"draft-fail:{post_id}"
+        )
 
     async def _to_drafted(self, s: AsyncSession, post: Post) -> None:
         if post.status == S.SCHEDULED:

@@ -32,6 +32,7 @@ _TAG_RE = re.compile(r"<[^>]*>")
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
 _HREF_RE = re.compile(r"""href\s*=\s*["']([^"']+)["']""", re.I)
 _UZ_APOS_RE = re.compile(r"([OoGg])['‘’`ʼ´](?!s\b)")
+_TUTUQ_RE = re.compile(r"(?<=[A-Za-z])(?<![OoGg])['‘’`ʻ´](?=[a-z])(?!s\b)")
 _KNOWN_WRAP_RE = re.compile(r"<\s*/?\s*(source|user|draft|instructions|system|stats)\b[^>]*>", re.I)
 _FENCE_RE = re.compile(r"^\s*```[A-Za-z0-9_-]*\s*\n?(.*?)\n?\s*```\s*$", re.S)
 
@@ -144,9 +145,12 @@ def extract_links(html: str) -> list[str]:
 
 
 def normalize_uz(text: str) -> str:
-    """o' g' ning har xil yozilishini oʻ gʻ (U+02BB) ga keltiradi; teglar ichiga tegmaydi."""
+    """oʻ/gʻ — ʻ (U+02BB), tutuq belgisi — ʼ (U+02BC) ga keltiradi; teglar ichiga tegmaydi."""
     parts = re.split(r"(<[^>]*>)", text)
-    return "".join(p if p.startswith("<") and p.endswith(">") else _UZ_APOS_RE.sub(r"\1ʻ", p) for p in parts)
+    return "".join(
+        p if p.startswith("<") and p.endswith(">") else _TUTUQ_RE.sub("ʼ", _UZ_APOS_RE.sub(r"\1ʻ", p))
+        for p in parts
+    )
 
 
 def strip_code_fences(text: str) -> str:

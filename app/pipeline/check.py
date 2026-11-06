@@ -111,6 +111,7 @@ class Checker:
         allowed: set[str],
         has_image: bool,
         risk_flags: Sequence[str] = (),
+        source_urls: Sequence[str] = (),
     ) -> CheckReport:
         kind = PostKind(kind)
         code_issues: list[dict[str, str]] = []
@@ -162,9 +163,14 @@ class Checker:
                     notes.append(f"Havolani tekshirib boʻlmadi: {url}")
 
         # 5) Model tekshiruvi
+        url_note = (
+            f"Manba havolalari (domenlari kod bilan tekshirilgan): {', '.join(source_urls)}\n\n"
+            if source_urls
+            else ""
+        )
         user = (
             f"Post turi: {kind.value}. Uzunlik: {length} belgi (talab: 500–900).\n\n"
-            + wrap_external("source", source_text or "(manba matni yoʻq — maslahat posti)")
+            + wrap_external("source", url_note + (source_text or "(manba matni yoʻq — maslahat posti)"))
             + "\n\n"
             + wrap_external("draft", draft_html)
         )

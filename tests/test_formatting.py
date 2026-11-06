@@ -115,3 +115,11 @@ def test_hashtags_defaults_for_alert() -> None:
 def test_footer() -> None:
     assert render_footer("@it_dunyosi") == "👉 @it_dunyosi"
     assert render_footer("") == ""
+
+
+def test_normalize_uz_tutuq_belgisi() -> None:
+    # tutuq belgisi — ʼ (U+02BC), oʻ/gʻ — ʻ (U+02BB)
+    assert normalize_uz("ta'sir ma’lumot taʻsir san'at") == "taʼsir maʼlumot taʼsir sanʼat"
+    assert normalize_uz("o'zbek g'oya") == "oʻzbek gʻoya"
+    assert normalize_uz("Google's update") == "Google's update"
+    assert normalize_uz("'Kotirovka' so'zi") == "'Kotirovka' soʻzi"

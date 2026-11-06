@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 T = TypeVar("T", bound=BaseModel)
 
 FALLBACK: dict[str, str] = {"writer": "editor", "editor": "writer", "fast": "writer"}
+TRUNCATION_FACTOR = 4
+MAX_OUTPUT_TOKENS = 32_000
 _NON_RETRYABLE_STATUS = frozenset({400, 401, 403, 404, 422})
 
 
@@ -72,6 +74,7 @@ class AIRouter:
         self.timeout = timeout
         self.attempts = attempts
         self._sleep = sleep
+        self._budget_factor: dict[int, int] = {}  # mijoz -> chiqish byudjeti koeffitsienti
 
     def has(self, role: str) -> bool:
         return self.clients.get(role) is not None
@@ -147,6 +150,13 @@ class AIRouter:
             try:
                 parsed = parse_json(raw.text, schema)
             except (ValueError, ValidationError) as exc:
+                logger.warning(
+                    "{} JSON berdi emas (kesilgan={}, {} belgi): {!r}",
+                    client.model,
+                    raw.truncated,
+                    len(raw.text),
+                    raw.text[:300],
+                )
                 hint = str(exc).splitlines()[0][:200]
                 retry_msgs = [
                     *msgs,
@@ -179,6 +189,35 @@ class AIRouter:
         )
 
     async def _call(
+        self,
+        client: LLMClient,
+        role: str,
+        msgs: list[Message],
+        json_mode: bool,
+        temperature: float,
+        max_tokens: int,
+    ) -> RawCompletion:
+        """Javob byudjet tufayli kesilsa (reasoning modellar), byudjetni oshirib bir marta qayta so'raydi."""
+        factor = self._budget_factor.get(id(client), 1)
+        raw = await self._call_once(
+            client, role, msgs, json_mode, temperature, min(max_tokens * factor, MAX_OUTPUT_TOKENS)
+        )
+        if raw.truncated and factor == 1:
+            self._budget_factor[id(client)] = TRUNCATION_FACTOR
+            logger.info(
+                "{} javobi kesildi (byudjet tugadi) — byudjet {}x oshirildi", client.model, TRUNCATION_FACTOR
+            )
+            raw = await self._call_once(
+                client,
+                role,
+                msgs,
+                json_mode,
+                temperature,
+                min(max_tokens * TRUNCATION_FACTOR, MAX_OUTPUT_TOKENS),
+            )
+        return raw
+
+    async def _call_once(
         self,
         client: LLMClient,
         role: str,

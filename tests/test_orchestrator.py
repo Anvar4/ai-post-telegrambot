@@ -270,3 +270,27 @@ async def test_replace_text_by_admin(ctx) -> None:
     assert post.text_html.startswith("<b>Admin matni</b> oʻzgardi")
     assert "<script>" not in post.text_html
     assert post.status == PostStatus.PENDING_APPROVAL
+
+
+async def test_ai_failure_during_draft_marks_post_failed_and_tries_next_story(ctx) -> None:
+    from app.ai.types import SchemaError
+
+    llms = make_llms(ctx)
+    calls = {"n": 0}
+
+    def flaky(messages):
+        calls["n"] += 1
+        if calls["n"] <= 3:  # router 3 marta urinadi — hammasi yiqiladi
+            return SchemaError("writer: JSON topilmadi")
+        from tests.pipeline_helpers import writer_answer
+
+        return writer_answer()
+
+    llms["writer"].routes.insert(0, ("bosh muallifisan", flaky))
+    await seed_story(ctx, now=NOW)
+    await seed_story(ctx, now=NOW, title="Second unrelated Android malware campaign spotted")
+    pid = await pipeline(ctx).prepare_slot("morning", SLOT_AT)
+    first, second = await posts(ctx)
+    assert first.status == PostStatus.FAILED
+    assert second.id == pid and second.status == PostStatus.PENDING_APPROVAL
+    assert any("#" + str(first.id) in m[0] for m in ctx.notifier.messages)

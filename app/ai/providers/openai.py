@@ -73,6 +73,7 @@ class OpenAIClient:
             else:
                 raise
         text = (resp.choices[0].message.content or "") if resp.choices else ""
+        truncated = bool(resp.choices) and resp.choices[0].finish_reason == "length"
         usage = resp.usage
         cached = 0
         if usage is not None and usage.prompt_tokens_details is not None:
@@ -82,6 +83,7 @@ class OpenAIClient:
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
             cached_tokens=cached,
+            truncated=truncated,
         )
 
     async def list_models(self) -> list[str] | None:

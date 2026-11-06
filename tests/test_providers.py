@@ -246,3 +246,51 @@ async def test_replicate_image() -> None:
         client = ReplicateImageClient("r8_key", "black-forest-labs/flux-schnell", http=http)
         assert await client.generate("tech") == b"IMG2"
     assert route.calls[0].request.headers["prefer"] == "wait"
+
+
+async def test_openai_client_marks_length_truncation() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = chat_response("")
+        body["choices"][0]["finish_reason"] = "length"
+        return httpx2.Response(200, json=body)
+
+    client = OpenAICompatClient(
+        "k", "deepseek-v4-pro", base_url="https://api.deepseek.com", http_client=mock_http(handler)
+    )
+    assert (await client.complete([Message("user", "u")])).truncated is True
+
+
+async def test_anthropic_client_marks_max_tokens_truncation() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "id": "m",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-x",
+                "content": [{"type": "text", "text": "{"}],
+                "stop_reason": "max_tokens",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 5},
+            },
+        )
+
+    client = AnthropicClient("k", "claude-x", http_client=mock_http(handler))
+    assert (await client.complete([Message("user", "u")])).truncated is True
+
+
+async def test_gemini_client_marks_max_tokens_truncation() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "candidates": [
+                    {"content": {"parts": [{"text": "{"}], "role": "model"}, "finishReason": "MAX_TOKENS"}
+                ],
+                "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1},
+            },
+        )
+
+    client = GeminiClient("k", "gemini-x", http_client=mock_http(handler))
+    assert (await client.complete([Message("user", "u")])).truncated is True

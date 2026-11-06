@@ -8,6 +8,9 @@ Shablon (tuzilishiga amal qil, {qavs} ichidagilarni mazmun bilan almashtir):
 Qoidalar:
 - Faqat o'zbek tilida, lotin yozuvida; oʻ va gʻ harflari ʻ belgisi bilan (oʻ, gʻ). Keng tarqalgan o'zbekcha termin bo'lsa — o'zbekcha (zaiflik, yangilanish), bo'lmasa inglizchasi qavsda.
 - Faqat <source> dagi faktlar. Raqam, sana, versiya, nomlarni o'zgartirma. Manbada yo'q narsani qo'shma. Ishonching komil bo'lmasa — yozma.
+- Shablondagi biror maydon uchun <source> da maʼlumot boʻlmasa — oʻsha qatorni tushirib qoldir. Hech qachon taxmin qilib toʻldirma.
+- Xavf darajasini (Kritik / Yuqori / Oʻrta) faqat manbada daraja yoki CVSS ball berilgan boʻlsa yoz. Manba CISA KEV boʻlsa va daraja berilmagan boʻlsa, «Xavf darajasi» oʻrniga «<b>Holati:</b> faol ekspluatatsiya qilinmoqda (CISA KEV)» deb yoz va CISA katalog havolasini manba sifatida qoʻy. CVE raqamini alohida yoz.
+- CISA katalogidagi «Required action», «Due date» va BOD talablari faqat AQSh davlat idoralari uchun — ularni oʻquvchiga majburiyat sifatida yozma. Oʻrniga oddiy foydalanuvchi uchun amaliy qadam yoz (masalan: qurilmani/dasturni yangilash, sozlamani tekshirish).
 - O'z so'zlaring bilan qisqa bayon qil; manbadan uzun iqtibos olma (ko'pi bilan 1 ta, 15 so'zdan qisqa).
 - Birinchi jumla — eng muhim fakt. Jami {{min_len}}–{{max_len}} belgi.
 - Ton: professional, xotirjam, aniq. Vahima, clickbait, "SHOK" yo'q. Ortiqcha emoji yo'q: boshida bitta kategoriya emojisi, ro'yxatlarda belgilar.

@@ -9,7 +9,8 @@ ALERT = """🔴 <b>OGOHLANTIRISH: {qisqa sarlavha}</b>
 {1–2 jumla: nima bo'ldi}
 
 <b>Kimga ta'sir qiladi:</b> {mahsulot, versiyalar}
-<b>Xavf darajasi:</b> {Kritik / Yuqori / O'rta} {CVE raqami, bo'lsa}
+<b>Xavf darajasi:</b> {manbadagi daraja: Kritik / Yuqori / O'rta — manbada boʻlmasa qatorni tushir}
+<b>CVE:</b> {CVE raqami, boʻlsa}
 <b>Nima qilish kerak:</b>
 • {amaliy qadam 1}
 • {amaliy qadam 2}

@@ -48,11 +48,13 @@ class GeminiClient:
             model=self.model, contents=contents, config=config
         )
         um = resp.usage_metadata
+        finish = str(resp.candidates[0].finish_reason) if resp.candidates else ""
         return RawCompletion(
             text=resp.text or "",
             input_tokens=(um.prompt_token_count or 0) if um else 0,
             output_tokens=((um.candidates_token_count or 0) + (um.thoughts_token_count or 0)) if um else 0,
             cached_tokens=(um.cached_content_token_count or 0) if um else 0,
+            truncated="MAX_TOKENS" in finish,
         )
 
     async def list_models(self) -> list[str] | None:

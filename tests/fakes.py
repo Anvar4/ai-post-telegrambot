@@ -52,6 +52,8 @@ class ScriptedLLM:
             item = item(messages)
         if isinstance(item, Exception):
             raise item
+        if isinstance(item, RawCompletion):
+            return item
         return RawCompletion(text=str(item), input_tokens=self.tokens[0], output_tokens=self.tokens[1])
 
     async def list_models(self) -> list[str] | None:

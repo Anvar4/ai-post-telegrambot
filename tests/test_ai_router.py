@@ -209,3 +209,29 @@ async def test_parse_json_embedded_in_text() -> None:
 
 def test_router_module_has_no_sleep_in_tests() -> None:
     assert asyncio.iscoroutinefunction(AIRouter.complete)
+
+
+async def test_truncated_completion_retried_with_bigger_budget() -> None:
+    from app.ai.types import RawCompletion
+
+    writer = ScriptedLLM(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        script=[RawCompletion(text='{"verd', output_tokens=2500, truncated=True), PASS_JSON, PASS_JSON],
+    )
+    router, _ = make_router(writer=writer)
+    res = await router.complete("writer", MSGS, schema=CheckOutput, max_tokens=2500)
+    assert res.parsed.verdict == "pass"
+    assert [k["max_tokens"] for k in writer.kwargs] == [2500, 10000]
+    # keyingi chaqiruvda katta byudjet darhol ishlatiladi (behuda so'rov yo'q)
+    await router.complete("writer", MSGS, schema=CheckOutput, max_tokens=2500)
+    assert writer.kwargs[-1]["max_tokens"] == 10000
+
+
+async def test_truncation_budget_is_capped() -> None:
+    from app.ai.types import RawCompletion
+
+    writer = ScriptedLLM(script=[RawCompletion(text="", truncated=True), "ok"])
+    router, _ = make_router(writer=writer)
+    await router.complete("writer", MSGS, max_tokens=20000)
+    assert writer.kwargs[-1]["max_tokens"] == 32000

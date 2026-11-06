@@ -94,17 +94,18 @@ async def main(n: int) -> int:
         results = []
         for st in stories:
             kind = PostKind.ALERT if st.category == "kiber" else PostKind.NEWS
-            rows = await pipeline._source_rows(st.id)
-            source_text = await pipeline._source_text(rows)
-            urls = [a.url for a, _ in rows]
+            m = await pipeline.story_material(st.id)
             res = await draft_with_checks(
                 pipeline.writer,
                 pipeline.checker,
                 kind,
-                source_text=source_text,
+                source_text=m["source_text"],
                 story_title=st.title,
-                source_urls=urls,
+                source_urls=m["urls"],
+                source_name=m["source_name"],
                 has_image=True,
+                risk_flags=st.risk_flags or [],
+                extra_allowed=m["extra_allowed"],
             )
             fabricated = [i for i in res.report.all_issues() if i.get("type") == "fabricated"]
             results.append(

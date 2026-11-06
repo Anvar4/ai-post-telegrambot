@@ -69,6 +69,7 @@ class AnthropicClient:
             input_tokens=(u.input_tokens or 0) + cache_read + cache_write,
             output_tokens=u.output_tokens or 0,
             cached_tokens=cache_read,
+            truncated=getattr(resp, "stop_reason", None) == "max_tokens",
         )
 
     async def list_models(self) -> list[str] | None:

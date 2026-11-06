@@ -22,6 +22,7 @@ class RawCompletion:
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
+    truncated: bool = False  # chiqish byudjeti tugadi (reasoning modellarda o'ylash ham hisoblanadi)
 
 
 @dataclass

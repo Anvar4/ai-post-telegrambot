@@ -201,3 +201,47 @@ async def test_reject_verdict_returned(ctx) -> None:
     )
     assert res.report.verdict == "reject"
     assert len(writer.calls) == 1
+
+
+async def test_checker_receives_source_urls(ctx) -> None:
+    editor = ScriptedLLM(script=[check_json("pass")])
+    use_llm(ctx, editor=editor)
+    await Checker(ctx).check(
+        draft(), source_text="s", kind=PostKind.ALERT, allowed=ALLOWED, has_image=True, source_urls=[SRC_URL]
+    )
+    source_block = editor.calls[0][-1].content.split("<draft>")[0]
+    assert SRC_URL in source_block
+
+
+async def test_draft_with_checks_passes_urls_to_checker(ctx) -> None:
+    writer = ScriptedLLM(script=[writer_json(draft())])
+    editor = ScriptedLLM(script=[check_json("pass")])
+    use_llm(ctx, writer=writer, editor=editor)
+    await draft_with_checks(
+        Writer(ctx),
+        Checker(ctx),
+        PostKind.ALERT,
+        source_text="s",
+        story_title="t",
+        source_urls=[SRC_URL],
+        has_image=True,
+    )
+    assert SRC_URL in editor.calls[0][-1].content.split("<draft>")[0]
+
+
+async def test_writer_gets_extra_allowed_urls(ctx) -> None:
+    writer = ScriptedLLM(script=[writer_json(draft())])
+    editor = ScriptedLLM(script=[check_json("pass")])
+    use_llm(ctx, writer=writer, editor=editor)
+    cisa = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+    await draft_with_checks(
+        Writer(ctx),
+        Checker(ctx),
+        PostKind.ALERT,
+        source_text="s",
+        story_title="t",
+        source_urls=[SRC_URL],
+        extra_allowed=[cisa],
+        has_image=True,
+    )
+    assert cisa in writer.calls[0][-1].content
