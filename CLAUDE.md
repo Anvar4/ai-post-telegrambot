@@ -17,10 +17,13 @@ Asosiy hujjat: `SPEC.md` (talablar), reja: `docs/superpowers/plans/2026-11-06-it
 - `app/ai/` — `router.py` (rol → provayder, retry, fallback, budjet, `llm_usage`), `providers/`, `images/`, `prompts/*.md`, `schemas.py`.
 - `app/collectors/` — manbalar (RSS, CISA KEV, NVD, HN, GitHub), normallashtirish, dublikat → story.
 - `app/pipeline/` — saralash → yozish → tekshirish → rasm → kompozitsiya → nashr; `state.py` holatlar mashinasi.
-- `app/content/` — shablonlar, HTML formatlash, Telegram limitlari, hashtaglar, Pillow brend rasmi, slot jadvali.
+- `app/content/` — shablonlar, HTML formatlash, Telegram limitlari, hashtaglar, Pillow brend rasmi;
+  `schedule.py` — `plan_day()` (kun rejasi: vaqtlar, turkumlar, haftalik soʻrovnoma/test).
+- `app/images/search.py` — bepul rasm qidirish (Pexels, Wikimedia), litsenziya va sifat tekshiruvi.
 - `app/interactive/` — so'rovnoma, test, savol-javob, moderatsiya.
 - `app/analytics/` — metrikalar, invite-linklar, hisobotlar, o'sish tahlili.
-- `app/bot/` — aiogram handlerlari, klaviaturalar, middleware, `sender.py` (Telegram'ga yagona chiqish yo'li), `notify.py`.
+- `app/bot/` — aiogram handlerlari (`manual.py` — qoʻlda post, `settings_menu.py` — /settings katakchalari),
+  klaviaturalar, middleware, `sender.py` (Telegram'ga yagona chiqish yo'li), `notify.py`.
 - `app/scheduler/` — APScheduler vazifalari (modul darajasidagi funksiyalar, `app.context.get_ctx()` orqali).
 - `app/db/` — MongoDB: `models.py` (dataclass hujjatlar, `id` = `_id`), `repo.py` (`Repo`, `Collection`), `mongo.py` (ulanish, indekslar).
 - `tests/` — pytest; `conftest.py` da `FakeLLM`, `FakeSender`, `FakeImage`; baza — `tests/mongo_fake.py` (mongomock).
@@ -36,6 +39,9 @@ Asosiy hujjat: `SPEC.md` (talablar), reja: `docs/superpowers/plans/2026-11-06-it
 - Post holati faqat `pipeline.state.transition(repo, post, ...)` orqali o'zgaradi (audit yoziladi), keyin `repo.posts.save(post)`.
 - Nashr `repo.posts.cas()` bilan atomik — bir post ikki marta chiqmaydi. Ko'p yozuv — `insert_many` (Atlas kechikishi).
 - Matn o'zbekcha lotin; oʻ/gʻ — `ʻ` (U+02BB), `content.formatting.normalize_uz()`.
+- Rasm: maqola rasmlari olinmaydi; faqat Pexels va CC0/PD/CC BY/CC BY-SA. Pullik AI rasm `image_mode=search_then_ask`
+  da faqat admin ruxsati bilan (`Pipeline.use_ai_image`, atomik — bir marta).
+- Slot kaliti: `YYYY-MM-DD:HH:MM` (`pipeline.slots.slot_key`); bir slotga bitta post.
 
 ## Uslub
 

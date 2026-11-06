@@ -29,19 +29,21 @@ Manbalar (RSS, CISA KEV, NVD, Hacker News, GitHub, UZCERT…) ── har 30 daqi
    → gpt-6-luna: mavzuga oidmi?  → gpt-6-sol: 0–100 ball, kategoriya, shoshilinchmi?
    → 1-model (yozuvchi): oʻzbekcha post
    → gpt-6-sol: fakt-tekshiruv (kerak boʻlsa 2 martagacha tuzatish)
-   → 2-model: muqova rasmi + brend shabloni (sarlavha, kategoriya, @kanal)
+   → rasm: Pexels / Wikimedia dan bepul rasm (litsenziya va sifat tekshiruvi) + brend shabloni;
+     topilmasa — sizdan soʻraydi: 🎨 AI rasm (pullik) / 📝 rasmsiz / ❌
    → semi_auto: qoralama sizga tugmalar bilan keladi | auto: oʻzi chiqadi
+   → nashrdan keyin postga "📤 Ulashish" tugmasi qoʻshiladi
 ```
 
 | Kalit | Roli | Vazifasi |
 |---|---|---|
 | 1-kalit (`LLM_MAIN_*`) | Yozuvchi | Postlar, soʻrovnoma va testlar, obunachilarga javoblar |
-| 2-kalit (`IMAGE_*`) | Dizayner | Har post uchun matnsiz muqova rasmi |
+| 2-kalit (`IMAGE_*`) | Dizayner | Bepul rasm topilmaganda (faqat sizning ruxsatingiz bilan) matnsiz muqova rasmi |
 | 3-kalit (`OPENAI_API_KEY`) | Bosh muharrir | `gpt-6-sol`: saralash, fakt-tekshiruv, oʻsish tahlili, `/ask`. `gpt-6-luna`: tez filtr va moderatsiya |
 
 Bitta model ishlamay qolsa, bot toʻxtamaydi: yozuvchi oʻrnini `gpt-6-sol` bosadi, rasm oʻrniga brend fon chiziladi, tekshiruvchi ishlamasa post albatta sizning tasdigʻingizga keladi.
 
-**Standart jadval** (Toshkent vaqti, `/settings` orqali oʻzgaradi):
+**Standart jadval** (Toshkent vaqti). Hammasi `/settings` menyusida katakchalar bilan oʻzgaradi: kuniga nechta post (1–8), soat nechida, qaysi turkumlar (kiber, IT yangiliklar, AI, ilovalar, saytlar, maslahatlar) va haftasiga nechta soʻrovnoma/test (0–7).
 
 | Vaqt | Nima chiqadi |
 |---|---|
@@ -50,6 +52,8 @@ Bitta model ishlamay qolsa, bot toʻxtamaydi: yozuvchi oʻrnini `gpt-6-sol` bosa
 | 19:30 | Yangilik, soʻrovnoma (haftasiga 2) yoki test (haftasiga 2) |
 | Yakshanba 20:00 | Haftalik dayjest |
 | Istalgan vaqt | Shoshilinch kiber xabar (kuniga koʻpi bilan 1 ta; 23:00–07:00 oraligʻida 07:30 ga suriladi) |
+
+Boshqa vaqtlar tanlansa ham tartib shu: kunning birinchi posti — yangilik, keyin navbat bilan yangilik va foydali post (ilova/sayt/maslahat), soʻrovnoma va test kunlarida ular kunning oxirgi postlari boʻladi. Oʻchirilgan turkum oʻrniga qolganlari ishlatiladi.
 
 Qoralamalar slotdan 45 daqiqa oldin tayyorlanadi, ularni koʻrib chiqishga vaqtingiz qoladi.
 
@@ -192,8 +196,30 @@ Har bir qoralama sizga quyidagi koʻrinishda keladi: rasm, post matni, muharrir 
 | 🕒 Vaqtga qoʻyish | Rejadagi vaqtga (yoki keyingi boʻsh slotga) qoʻyadi |
 | ✏️ Tahrirlash | Tayyor matn yuborasiz **yoki** koʻrsatma berasiz ("qisqaroq qil", "rasmiyroq") |
 | 🔄 Qayta yozish | Butunlay qaytadan yozadi |
-| 🖼 Boshqa rasm | Yangi rasm chizadi |
+| 🖼 Boshqa rasm | Qidiruvdagi keyingi bepul rasmni oladi (AI rejimida — yangisini chizadi) |
 | ❌ Rad etish | Postni bekor qiladi |
+
+**Bepul rasm topilmasa** post `auto` rejimda ham oʻzi chiqmaydi — sizga shu tugmalar bilan keladi:
+
+| Tugma | Nima qiladi |
+|---|---|
+| 🎨 AI rasm (pullik) | 2-kalit bilan rasm chizadi (ikki marta bossangiz ham bir marta). `auto` da post rejaga qoʻyiladi, `semi_auto` da yangi rasm bilan sizga qayta keladi |
+| 📝 Rasmsiz chiqarish | Post rasmsiz, oʻz vaqtida (yoki keyingi boʻsh slotda) chiqadi |
+| ✏️ Tahrirlash, ❌ Rad etish | Odatdagidek |
+
+Rasm faqat ruxsat etilgan litsenziyalardan olinadi: Pexels, Wikimedia da CC0, Public domain, CC BY va CC BY-SA (NC/ND yoʻq). Maqola va saytlardagi rasmlar olinmaydi. Muallif va litsenziya postning oxirida koʻrsatiladi. Rasm rejimini `/settings` dan oʻzgartirish mumkin: qidirish → topilmasa soʻrash (standart), doim AI, rasmsiz.
+
+### Qoʻlda post (oʻzingizning postingiz)
+
+1. Botga **rasm, video yoki GIF** yuboring (izohi bilan). Matnli post uchun avval `/new`, keyin matnni yuboring.
+2. Bot "Qachon chiqarilsin?" deb soʻraydi: 🚀 Hozir · keyingi 3 ta boʻsh slot · ⏰ Boshqa vaqt (`HH:MM`, `DD.MM HH:MM`) · ❌ Bekor qilish.
+3. Belgilangan vaqtda bot postni oʻzi chiqaradi. Navbatni `/queue` da koʻrasiz, `/show ID` post qanday chiqishini koʻrsatadi.
+
+Izoh 1024 belgidan uzun boʻlsa, avval media, keyin matn alohida xabar boʻlib chiqadi. Slot tanlansa, AI shu slotga alohida post tayyorlamaydi. Albom (bir nechta fayl) hozircha qoʻllab-quvvatlanmaydi.
+
+### Ulashish tugmasi
+
+Har bir chiqqan post ostiga "📤 Ulashish" tugmasi qoʻshiladi: u Telegram'ning ulashish oynasini post havolasi bilan ochadi. `/settings` da oʻchirish mumkin (soʻrovnomalarga qoʻshilmaydi).
 
 Yangiliklar 6 soat ichida tasdiqlanmasa eskiradi (`EXPIRED`). Ilova, sayt va maslahat postlari eskirmaydi. Javob bermasangiz, bot standart holatda **kutadi**. Buni `/set approval_timeout_action publish` bilan oʻzgartirish mumkin: shunda 30 daqiqadan keyin xavfsiz postlar oʻzi chiqadi.
 
@@ -205,6 +231,7 @@ Yangiliklar 6 soat ichida tasdiqlanmasa eskiradi (`EXPIRED`). Ilova, sayt va mas
 | `/status` | Holat, navbat, bugungi xarajat |
 | `/queue`, `/show ID`, `/time ID HH:MM` | Navbat, qoralamani koʻrish, vaqtni oʻzgartirish |
 | `/post <mavzu yoki havola>` | Darhol post tayyorlash |
+| `/new` yoki rasm/video/GIF yuborish | Oʻzingizning postingizni rejalashtirish |
 | `/poll [mavzu]`, `/quiz [mavzu]` | Soʻrovnoma yoki test |
 | `/digest` | Haftalik dayjest |
 | `/sources`, `/source_add URL kategoriya` | Manbalar |
@@ -213,7 +240,8 @@ Yangiliklar 6 soat ichida tasdiqlanmasa eskiradi (`EXPIRED`). Ilova, sayt va mas
 | `/stats [7\|30]`, `/growth` | Statistika, oʻsish hisoboti va tavsiyalar |
 | `/link <nom>` | Reklama yoki hamkorlik uchun nomli taklif havolasi |
 | `/budget`, `/logs` | AI xarajati, oxirgi xatolar |
-| `/settings`, `/set kalit qiymat` | Jadval, jim soatlar, limitlar |
+| `/settings` | Katakchali menyu: vaqtlar, turkumlar, soʻrovnoma/test soni, rasm rejimi, ulashish tugmasi |
+| `/set kalit qiymat` | Boshqa sozlamalar: `/set slot_times 08:15,13:00`, `/set quiet.start 23:00` va h.k. |
 | `/ask <savol>` yoki oddiy matn | AI maslahatchi |
 | `/id` | Chat ID si |
 
@@ -279,7 +307,7 @@ Loglar `data/logs/bot.log` va `data/logs/errors.log` da yoki `docker compose log
 ## 12. Dasturchilar uchun
 
 ```bash
-make check     # ruff + mypy + pytest (300+ test)
+make check     # ruff + mypy + pytest (390+ test)
 make test
 make sources   # manbalarni tekshirish
 ```
