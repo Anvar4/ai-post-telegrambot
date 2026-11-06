@@ -13,6 +13,7 @@ def _secret(value: object) -> str | None:
 def register_services(ctx: AppContext) -> None:
     """Barcha servislarni `ctx.services` ga joylaydi."""
     from app.collectors.service import CollectorService
+    from app.pipeline.image import ImageStage
     from app.pipeline.orchestrator import Pipeline
     from app.pipeline.publish import Publisher
 
@@ -20,6 +21,7 @@ def register_services(ctx: AppContext) -> None:
     pipeline = Pipeline(ctx)
     ctx.services["pipeline"] = pipeline
     ctx.services["selector"] = pipeline.selector
+    ctx.services["images"] = ImageStage(ctx)
     ctx.services["publisher"] = Publisher(ctx.repo, ctx.sender, s, ctx.notifier, runtime=ctx.runtime)
     if ctx.http is not None:
         ctx.services["collector"] = CollectorService(
