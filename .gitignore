@@ -1,0 +1,30 @@
+# Sirlar
+.env
+.env.*
+!.env.example
+
+# Ma'lumotlar (bot.db, rasmlar, backup, loglar)
+data/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Ish muhiti
+.superpowers/
+.idea/
+.vscode/
+*.log
+Thumbs.db
+.DS_Store
