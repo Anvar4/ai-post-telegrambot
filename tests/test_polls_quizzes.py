@@ -2,8 +2,6 @@ import json
 import re
 from datetime import timedelta
 
-from sqlalchemy import select
-
 from app.ai.types import Message
 from app.db.models import Poll, Post
 from app.interactive.polls import PollService
@@ -62,8 +60,7 @@ async def test_quiz_verified_matches(ctx) -> None:
     assert post.status == PostStatus.PENDING_APPROVAL
     poll = post.extra["poll"]
     assert poll["quiz"] is True and poll["options"][poll["correct_option_id"]] == "Ctrl+C"
-    async with ctx.repo.session() as s:
-        row = (await s.execute(select(Poll))).scalar_one()
+    row = (await ctx.repo.all(Poll))[0]
     assert row.purpose == "quiz" and row.correct_option_ids == [poll["correct_option_id"]]
 
 
@@ -74,8 +71,7 @@ async def test_quiz_dropped_on_mismatch(ctx) -> None:
     quizzes, _ = services(ctx)
     assert await quizzes.create("klaviatura yorliqlari") is None
     assert len(editor.calls) == 2
-    async with ctx.repo.session() as s:
-        assert (await s.execute(select(Post))).first() is None
+    assert await ctx.repo.all(Post) == []
     assert ctx.notifier.messages
 
 
@@ -128,8 +124,7 @@ async def test_poll_always_anonymous_regular_poll(ctx) -> None:
     assert post.kind == PostKind.POLL
     assert post.extra["poll"]["quiz"] is False
     assert post.extra["poll"]["options"] == ["Chrome", "Firefox", "Edge", "Safari"]
-    async with ctx.repo.session() as s:
-        row = (await s.execute(select(Poll))).scalar_one()
+    row = (await ctx.repo.all(Poll))[0]
     assert row.purpose == "fun"
 
 
@@ -143,56 +138,47 @@ async def test_poll_with_invalid_options_retries_then_drops(ctx) -> None:
 
 
 async def test_poll_closed_after_24h(ctx) -> None:
-    async with ctx.repo.session() as s:
-        post = Post(
-            kind=PostKind.POLL, status=PostStatus.PUBLISHED, text_html="q", chat_id=-1001, message_id=77
+    post = Post(kind=PostKind.POLL, status=PostStatus.PUBLISHED, text_html="q", chat_id=-1001, message_id=77)
+    await ctx.repo.add(post)
+    await ctx.repo.add(
+        Poll(
+            post_id=post.id,
+            question="q",
+            options=["a", "b"],
+            purpose="fun",
+            telegram_poll_id="p1",
+            closes_at=utcnow() - timedelta(minutes=1),
         )
-        s.add(post)
-        await s.flush()
-        s.add(
-            Poll(
-                post_id=post.id,
-                question="q",
-                options=["a", "b"],
-                purpose="fun",
-                telegram_poll_id="p1",
-                closes_at=utcnow() - timedelta(minutes=1),
-            )
+    )
+    await ctx.repo.add(
+        Poll(
+            post_id=post.id,
+            question="q2",
+            options=["a", "b"],
+            purpose="fun",
+            telegram_poll_id="p2",
+            closes_at=utcnow() + timedelta(hours=5),
         )
-        s.add(
-            Poll(
-                post_id=post.id,
-                question="q2",
-                options=["a", "b"],
-                purpose="fun",
-                telegram_poll_id="p2",
-                closes_at=utcnow() + timedelta(hours=5),
-            )
-        )
-        await s.commit()
+    )
     _, polls = services(ctx)
     assert await polls.close_due() == 1
     assert ctx.sender.stopped == [(-1001, 77)]
-    async with ctx.repo.session() as s:
-        closed = {p.telegram_poll_id: p.closed for p in (await s.execute(select(Poll))).scalars()}
+    closed = {p.telegram_poll_id: p.closed for p in await ctx.repo.all(Poll)}
     assert closed == {"p1": True, "p2": False}
 
 
 async def test_poll_results_saved_and_research_context(ctx) -> None:
-    async with ctx.repo.session() as s:
-        s.add(
-            Poll(
-                question="Qaysi OS dan foydalanasiz?",
-                options=["Windows", "Linux"],
-                purpose="research",
-                telegram_poll_id="p9",
-            )
+    await ctx.repo.add(
+        Poll(
+            question="Qaysi OS dan foydalanasiz?",
+            options=["Windows", "Linux"],
+            purpose="research",
+            telegram_poll_id="p9",
         )
-        await s.commit()
+    )
     _, polls = services(ctx)
     await polls.on_poll_update("p9", [("Windows", 30), ("Linux", 10)], total=40, is_closed=True)
-    async with ctx.repo.session() as s:
-        row = (await s.execute(select(Poll))).scalar_one()
+    row = (await ctx.repo.all(Poll))[0]
     assert row.results == {"Windows": 30, "Linux": 10}
     assert row.total_voters == 40 and row.closed is True
     context = await polls.research_context()

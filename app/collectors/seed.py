@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
-
 from app.db.models import Source
 
 if TYPE_CHECKING:
@@ -182,13 +180,11 @@ SEED_SOURCES: list[dict[str, Any]] = [
 
 
 async def seed_sources(repo: Repo) -> int:
-    """Manbalar jadvali bo'sh bo'lsa, boshlang'ich ro'yxatni qo'shadi."""
-    async with repo.session() as s:
-        if await s.scalar(select(func.count()).select_from(Source)):
-            return 0
-        for item in SEED_SOURCES:
-            s.add(
-                Source(enabled=item.get("enabled", True), **{k: v for k, v in item.items() if k != "enabled"})
-            )
-        await s.commit()
+    """Manbalar kolleksiyasi bo'sh bo'lsa, boshlang'ich ro'yxatni qo'shadi."""
+    if await repo.sources.count():
+        return 0
+    for item in SEED_SOURCES:
+        await repo.sources.insert(
+            Source(enabled=item.get("enabled", True), **{k: v for k, v in item.items() if k != "enabled"})
+        )
     return len(SEED_SOURCES)

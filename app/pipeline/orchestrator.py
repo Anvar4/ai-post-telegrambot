@@ -9,8 +9,6 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.prompts import load_prompt
 from app.ai.schemas import TipTopic, WriterOutput
@@ -21,7 +19,7 @@ from app.collectors.extract import extract_text
 from app.content.formatting import normalize_uz, sanitize_html
 from app.content.schedule import slot_kind
 from app.content.templates import render_footer
-from app.db.models import Article, Post, Source, Story
+from app.db.models import Post, Story
 from app.pipeline.check import Checker
 from app.pipeline.select import Selector
 from app.pipeline.state import PostKind, PostStatus, transition
@@ -49,6 +47,10 @@ class Pipeline:
         self.writer = Writer(ctx)
         self.checker = Checker(ctx)
         self.selector = Selector(ctx, clock=clock)
+
+    @property
+    def repo(self) -> Any:
+        return self.ctx.repo
 
     # ------------------------------------------------------------------ slotlar
 
@@ -99,17 +101,13 @@ class Pipeline:
         return story, kind
 
     async def _slot_taken(self, slot_key: str) -> bool:
-        async with self.ctx.repo.session() as s:
-            found = await s.scalar(
-                select(Post.id).where(Post.slot == slot_key, Post.status != S.REJECTED).limit(1)
-            )
-        return found is not None
+        return bool(await self.repo.posts.count({"slot": slot_key, "status": {"$ne": S.REJECTED}}))
 
     # ------------------------------------------------------------------ story'dan post
 
     async def prepare_from_story(
         self,
-        story_id: int,
+        story_id: int | None,
         kind: PostKind | str,
         scheduled_at: datetime | None,
         *,
@@ -119,12 +117,10 @@ class Pipeline:
         instructions: str | None = None,
     ) -> int | None:
         kind = PostKind(kind)
-        async with self.ctx.repo.session() as s:
-            story = await s.get(Story, story_id)
-            if story is None:
-                return None
-            story.status = "used"
-            await s.commit()
+        story = await self.repo.stories.get(story_id)
+        if story is None:
+            return None
+        await self.repo.stories.update(story_id, {"status": "used"})
         material = await self.story_material(story_id)
         pid = await self._new_post(
             kind,
@@ -146,7 +142,7 @@ class Pipeline:
         )
         return await self._draft(pid, force_approval=force_approval, instructions=instructions)
 
-    async def story_material(self, story_id: int) -> dict[str, Any]:
+    async def story_material(self, story_id: int | None) -> dict[str, Any]:
         """Story uchun manba havolalari, qo'shimcha ruxsat etilgan havolalar, manba nomi va matni."""
         rows = await self._source_rows(story_id)
         urls: list[str] = []
@@ -165,19 +161,16 @@ class Pipeline:
             "source_text": await self._source_text(rows),
         }
 
-    async def _source_rows(self, story_id: int) -> list[Any]:
+    async def _source_rows(self, story_id: int | None) -> list[Any]:
         """Story maqolalari va manbalari (ishonchli manba birinchi)."""
-        async with self.ctx.repo.session() as s:
-            return list(
-                (
-                    await s.execute(
-                        select(Article, Source)
-                        .join(Source, Source.id == Article.source_id, isouter=True)
-                        .where(Article.story_id == story_id)
-                        .order_by(Source.trust.desc().nulls_last(), Article.id)
-                    )
-                ).all()
-            )
+        articles = await self.repo.articles.find({"story_id": story_id}, sort=[("_id", 1)])
+        ids = list({a.source_id for a in articles if a.source_id is not None})
+        sources = {s.id: s for s in await self.repo.sources.find({"_id": {"$in": ids}})}
+        rows = [(a, sources.get(a.source_id)) for a in articles]
+        rows.sort(
+            key=lambda r: -(r[1].trust if r[1] is not None else -1)
+        )  # barqaror: ishonchli manba birinchi
+        return rows
 
     async def _source_text(self, rows: Sequence[Any]) -> str:
         parts: list[str] = []
@@ -203,8 +196,8 @@ class Pipeline:
         score: int | None,
         extra: dict[str, Any],
     ) -> int:
-        async with self.ctx.repo.session() as s:
-            post = Post(
+        post = await self.repo.posts.insert(
+            Post(
                 kind=kind,
                 status=S.NEW,
                 story_id=story_id,
@@ -218,11 +211,10 @@ class Pipeline:
                 created_at=self.clock(),
                 updated_at=self.clock(),
             )
-            s.add(post)
-            await s.flush()
-            await transition(s, post, S.SELECTED, created_by)
-            await s.commit()
-            return post.id
+        )
+        await transition(self.repo, post, S.SELECTED, created_by)
+        await self.repo.posts.save(post)
+        return post.id  # type: ignore[return-value]
 
     async def _draft(
         self,
@@ -256,33 +248,30 @@ class Pipeline:
             return None
         report = res.report
         admin_flow = force_approval or post.created_by == "admin"
-        async with self.ctx.repo.session() as s:
-            post = await s.get(Post, post_id)
-            assert post is not None
-            await self._to_drafted(s, post)
-            if report.verdict == "reject" and not admin_flow:
-                post.check_report = report.to_dict()
-                await transition(s, post, S.REJECTED, "checker", issues=report.all_issues()[:5])
-                if post.story_id:
-                    story = await s.get(Story, post.story_id)
-                    if story is not None:
-                        story.status = "rejected"
-                await s.commit()
-                logger.info("Post #{} tekshiruvdan o'tmadi va rad etildi", post_id)
-                return None
-            out = res.output
-            post.text_html = out.text_html
-            post.title_short = out.title_short
-            post.hashtags = out.hashtags
-            post.image_prompt = out.image_prompt_en
-            await transition(s, post, S.CHECKED, "checker", verdict=report.verdict, rounds=res.rounds)
-            if report.verdict == "reject":
-                report.needs_approval = True
-                report.add_reason("Tekshiruvchi rad etdi — diqqat bilan koʻrib chiqing")
+        post = await self.repo.posts.get(post_id)
+        assert post is not None
+        await self._to_drafted(post)
+        if report.verdict == "reject" and not admin_flow:
             post.check_report = report.to_dict()
-            post.needs_approval = report.needs_approval or admin_flow
-            post.approval_reason = report.approval_reason
-            await s.commit()
+            await transition(self.repo, post, S.REJECTED, "checker", issues=report.all_issues()[:5])
+            await self.repo.posts.save(post)
+            if post.story_id:
+                await self.repo.stories.update(post.story_id, {"status": "rejected"})
+            logger.info("Post #{} tekshiruvdan o'tmadi va rad etildi", post_id)
+            return None
+        out = res.output
+        post.text_html = out.text_html
+        post.title_short = out.title_short
+        post.hashtags = out.hashtags
+        post.image_prompt = out.image_prompt_en
+        await transition(self.repo, post, S.CHECKED, "checker", verdict=report.verdict, rounds=res.rounds)
+        if report.verdict == "reject":
+            report.needs_approval = True
+            report.add_reason("Tekshiruvchi rad etdi — diqqat bilan koʻrib chiqing")
+        post.check_report = report.to_dict()
+        post.needs_approval = report.needs_approval or admin_flow
+        post.approval_reason = report.approval_reason
+        await self.repo.posts.save(post)
         await self._make_image(post_id)
         await self.after_check(post_id)
         return post_id
@@ -291,21 +280,20 @@ class Pipeline:
         """AI xatosi tufayli qoralama tayyorlanmadi: post FAILED, adminga xabar (post osilib qolmaydi)."""
         err = mask_secrets(f"{type(exc).__name__}: {exc}")[:400]
         logger.warning("Post #{} qoralamasi tayyorlanmadi: {}", post_id, err)
-        async with self.ctx.repo.session() as s:
-            post = await s.get(Post, post_id)
-            if post is not None and post.status not in (S.PUBLISHED, S.REJECTED, S.EXPIRED, S.FAILED):
-                await transition(s, post, S.FAILED, "pipeline", error=err)
-                await s.commit()
+        post = await self.repo.posts.get(post_id)
+        if post is not None and post.status not in (S.PUBLISHED, S.REJECTED, S.EXPIRED, S.FAILED):
+            await transition(self.repo, post, S.FAILED, "pipeline", error=err)
+            await self.repo.posts.save(post)
         await self.ctx.repo.audit("pipeline", "error", message=f"Post #{post_id}: {err}")
         await self.ctx.notifier.notify(
             f"⚠️ Post #{post_id} qoralamasi tayyorlanmadi: {err}", key=f"draft-fail:{post_id}"
         )
 
-    async def _to_drafted(self, s: AsyncSession, post: Post) -> None:
+    async def _to_drafted(self, post: Post) -> None:
         if post.status == S.SCHEDULED:
-            await transition(s, post, S.PENDING_APPROVAL, "pipeline")
+            await transition(self.repo, post, S.PENDING_APPROVAL, "pipeline")
         if post.status in (S.SELECTED, S.CHECKED, S.PENDING_APPROVAL):
-            await transition(s, post, S.DRAFTED, "writer")
+            await transition(self.repo, post, S.DRAFTED, "writer")
 
     async def _make_image(self, post_id: int) -> None:
         images = self.ctx.services.get("images")
@@ -318,17 +306,16 @@ class Pipeline:
 
     async def after_check(self, post_id: int) -> None:
         mode = await self.ctx.runtime.publish_mode()
-        async with self.ctx.repo.session() as s:
-            post = await s.get(Post, post_id)
-            if post is None or post.status != S.CHECKED:
-                return
-            if mode == "auto" and not post.needs_approval and post.created_by == "ai":
-                post.scheduled_at = post.scheduled_at or self.clock()
-                await transition(s, post, S.SCHEDULED, "pipeline", mode=mode)
-                await s.commit()
-                return
-            await transition(s, post, S.PENDING_APPROVAL, "pipeline", mode=mode)
-            await s.commit()
+        post = await self.repo.posts.get(post_id)
+        if post is None or post.status != S.CHECKED:
+            return
+        if mode == "auto" and not post.needs_approval and post.created_by == "ai":
+            post.scheduled_at = post.scheduled_at or self.clock()
+            await transition(self.repo, post, S.SCHEDULED, "pipeline", mode=mode)
+            await self.repo.posts.save(post)
+            return
+        await transition(self.repo, post, S.PENDING_APPROVAL, "pipeline", mode=mode)
+        await self.repo.posts.save(post)
         await send_for_approval(self.ctx, post_id)
 
     # ------------------------------------------------------------------ maslahat, admin, dayjest
@@ -375,15 +362,10 @@ class Pipeline:
         return await self._draft(pid, force_approval=force_approval)
 
     async def _recent_titles(self, kind: PostKind, days: int) -> list[str]:
-        async with self.ctx.repo.session() as s:
-            rows = (
-                await s.execute(
-                    select(Post.title_short).where(
-                        Post.kind == kind, Post.created_at >= self.clock() - timedelta(days=days)
-                    )
-                )
-            ).scalars()
-            return [t for t in rows if t]
+        rows = await self.repo.posts.find(
+            {"kind": kind, "created_at": {"$gte": self.clock() - timedelta(days=days)}}
+        )
+        return [p.title_short for p in rows if p.title_short]
 
     async def prepare_from_admin(self, text: str, instructions: str | None = None) -> int | None:
         text = text.strip()
@@ -412,19 +394,12 @@ class Pipeline:
         return await self.prepare_tip(None, topic=text, created_by="admin", force_approval=True)
 
     async def _find_story(self, topic: str) -> Story | None:
-        async with self.ctx.repo.session() as s:
-            stories = (
-                (
-                    await s.execute(
-                        select(Story).where(
-                            Story.first_seen >= self.clock() - timedelta(hours=72),
-                            Story.status.in_(("new", "filtered", "scored")),
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
+        stories = await self.repo.stories.find(
+            {
+                "first_seen": {"$gte": self.clock() - timedelta(hours=72)},
+                "status": {"$in": ["new", "filtered", "scored"]},
+            }
+        )
         best = max(stories, key=lambda st: title_similarity(topic, st.title), default=None)
         if best is not None and title_similarity(topic, best.title) >= 60:
             return best
@@ -445,17 +420,16 @@ class Pipeline:
         footer = render_footer(self.ctx.settings.channel_username)
         if footer and footer not in text:
             text = text.rstrip() + "\n" + footer
-        async with self.ctx.repo.session() as s:
-            post = await s.get(Post, post_id)
-            if post is None or post.status not in (S.PENDING_APPROVAL, S.SCHEDULED, S.CHECKED):
-                raise ValueError("Bu postni hozir tahrirlab boʻlmaydi")
-            await self._to_drafted(s, post)
-            post.text_html = text
-            await transition(s, post, S.CHECKED, "admin")
-            post.check_report = {"verdict": "admin", "issues": [], "code_issues": []}
-            post.needs_approval = True
-            await transition(s, post, S.PENDING_APPROVAL, "admin")
-            await s.commit()
+        post = await self.repo.posts.get(post_id)
+        if post is None or post.status not in (S.PENDING_APPROVAL, S.SCHEDULED, S.CHECKED):
+            raise ValueError("Bu postni hozir tahrirlab boʻlmaydi")
+        await self._to_drafted(post)
+        post.text_html = text
+        await transition(self.repo, post, S.CHECKED, "admin")
+        post.check_report = {"verdict": "admin", "issues": [], "code_issues": []}
+        post.needs_approval = True
+        await transition(self.repo, post, S.PENDING_APPROVAL, "admin")
+        await self.repo.posts.save(post)
         await send_for_approval(self.ctx, post_id)
 
     async def regenerate_image(self, post_id: int) -> None:
@@ -503,18 +477,13 @@ class Pipeline:
 
     async def prepare_digest(self, scheduled_at: datetime | None, *, min_posts: int = 3) -> int | None:
         now = self.clock()
-        async with self.ctx.repo.session() as s:
-            posts = list(
-                (
-                    await s.execute(
-                        select(Post).where(
-                            Post.status == S.PUBLISHED,
-                            Post.published_at >= now - timedelta(days=7),
-                            Post.kind.not_in((PostKind.DIGEST, PostKind.POLL, PostKind.QUIZ, PostKind.QA)),
-                        )
-                    )
-                ).scalars()
-            )
+        posts = await self.repo.posts.find(
+            {
+                "status": S.PUBLISHED,
+                "published_at": {"$gte": now - timedelta(days=7)},
+                "kind": {"$nin": [PostKind.DIGEST, PostKind.POLL, PostKind.QUIZ, PostKind.QA]},
+            }
+        )
         metrics = self.ctx.services.get("metrics")
         engagement: dict[int, float] = {}
         if metrics is not None:
@@ -560,33 +529,29 @@ class Pipeline:
         timeout = timedelta(minutes=int(await rt.get("approval_timeout_min")))
         action = await rt.get("approval_timeout_action")
         changed = 0
-        async with self.ctx.repo.session() as s:
-            rows = (
-                (await s.execute(select(Post).where(Post.status.in_((S.PENDING_APPROVAL, S.SCHEDULED)))))
-                .scalars()
-                .all()
-            )
-            for post in rows:
-                if post.kind in EXPIRING_KINDS:
-                    # Kelajakka (masalan, tungi shoshilinch → 07:30) qo'yilgan post vaqtidan oldin eskirmaydi
-                    ref = max(post.created_at, post.scheduled_at) if post.scheduled_at else post.created_at
-                    if ref <= now - expiry:
-                        await transition(s, post, S.EXPIRED, "scheduler", reason="news expired")
-                        changed += 1
-                        continue
-                if (
-                    action == "publish"
-                    and post.status == S.PENDING_APPROVAL
-                    and not post.needs_approval
-                    and post.created_by == "ai"
-                    and post.approval_sent_at is not None
-                    and post.approval_sent_at <= now - timeout
-                ):
-                    if post.scheduled_at is None or post.scheduled_at < now:
-                        post.scheduled_at = now
-                    await transition(s, post, S.SCHEDULED, "scheduler", reason="approval timeout")
+        rows = await self.repo.posts.find({"status": {"$in": [S.PENDING_APPROVAL, S.SCHEDULED]}})
+        for post in rows:
+            if post.kind in EXPIRING_KINDS:
+                # Kelajakka (masalan, tungi shoshilinch → 07:30) qo'yilgan post vaqtidan oldin eskirmaydi
+                ref = max(post.created_at, post.scheduled_at) if post.scheduled_at else post.created_at
+                if ref <= now - expiry:
+                    await transition(self.repo, post, S.EXPIRED, "scheduler", reason="news expired")
+                    await self.repo.posts.save(post)
                     changed += 1
-            await s.commit()
+                    continue
+            if (
+                action == "publish"
+                and post.status == S.PENDING_APPROVAL
+                and not post.needs_approval
+                and post.created_by == "ai"
+                and post.approval_sent_at is not None
+                and post.approval_sent_at <= now - timeout
+            ):
+                if post.scheduled_at is None or post.scheduled_at < now:
+                    post.scheduled_at = now
+                await transition(self.repo, post, S.SCHEDULED, "scheduler", reason="approval timeout")
+                await self.repo.posts.save(post)
+                changed += 1
         return changed
 
     async def handle_breaking(self, now: datetime | None = None) -> int | None:

@@ -10,11 +10,10 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from loguru import logger
-from sqlalchemy import and_, or_, select
 
 from app.collectors import cisa_kev, github, hackernews, nvd, rss
 from app.collectors.base import FetchContext, Fetcher, RawItem
-from app.collectors.dedupe import attach_to_story
+from app.collectors.dedupe import STORY_WINDOW, StoryBatch, attach_to_story
 from app.collectors.normalize import url_hash
 from app.db.models import Article, Source
 from app.utils.security import mask_secrets
@@ -65,22 +64,15 @@ class CollectorService:
 
     async def run_once(self) -> CollectStats:
         now = self.clock()
-        async with self.repo.session() as s:
-            sources = list(
-                (
-                    await s.execute(
-                        select(Source).where(
-                            or_(
-                                Source.enabled.is_(True),
-                                and_(
-                                    Source.auto_disabled_at.is_not(None),
-                                    Source.auto_disabled_at <= now - RETRY_DISABLED_AFTER,
-                                ),
-                            )
-                        )
-                    )
-                ).scalars()
-            )
+        sources = await self.repo.sources.find(
+            {
+                "$or": [
+                    {"enabled": True},
+                    {"auto_disabled_at": {"$ne": None, "$lte": now - RETRY_DISABLED_AFTER}},
+                ]
+            },
+            sort=[("_id", 1)],
+        )
         fctx = FetchContext(now=now, nvd_api_key=self.nvd_api_key, github_token=self.github_token)
         sem = asyncio.Semaphore(self.concurrency)
 
@@ -113,77 +105,76 @@ class CollectorService:
         return stats
 
     async def _store(self, source: Source, items: list[RawItem], now: datetime) -> tuple[int, list[int]]:
-        added = 0
-        new_story_ids: list[int] = []
-        seen: set[str] = set()
-        async with self.repo.session() as s:
-            for item in items:
-                h = url_hash(item.url)
-                if h in seen:
-                    continue
-                seen.add(h)
-                exists = await s.scalar(select(Article.id).where(Article.url_hash == h))
-                if exists:
-                    continue
-                article = Article(
-                    source_id=source.id,
-                    url=item.url,
-                    url_hash=h,
-                    title=item.title,
-                    summary=item.summary,
-                    published_at=item.published_at,
-                    lang=item.lang,
-                    extra=item.extra,
-                    fetched_at=now,
-                )
-                s.add(article)
-                await s.flush()
-                story = await attach_to_story(s, article, category=source.category, now=now)
-                added += 1
-                if story.article_count == 1:
-                    new_story_ids.append(story.id)
-            await s.commit()
-        return added, new_story_ids
+        """Paketli saqlash: bir nechta so'rov bilan (har maqola uchun alohida so'rov emas)."""
+        by_hash: dict[str, RawItem] = {}
+        for item in items:
+            by_hash.setdefault(url_hash(item.url), item)
+        if not by_hash:
+            return 0, []
+        existing = {a.url_hash for a in await self.repo.articles.find({"url_hash": {"$in": list(by_hash)}})}
+        fresh = [(h, it) for h, it in by_hash.items() if h not in existing]
+        if not fresh:
+            return 0, []
+        candidates = await self.repo.stories.find({"first_seen": {"$gte": now - STORY_WINDOW}})
+        batch = StoryBatch(ids=iter(await self.repo.next_ids("stories", len(fresh))))
+        articles: list[Article] = []
+        for h, item in fresh:
+            article = Article(
+                source_id=source.id,
+                url=item.url,
+                url_hash=h,
+                title=item.title,
+                summary=item.summary,
+                published_at=item.published_at,
+                lang=item.lang,
+                extra=item.extra,
+                fetched_at=now,
+            )
+            await attach_to_story(
+                self.repo, article, category=source.category, now=now, candidates=candidates, batch=batch
+            )
+            articles.append(article)
+        await batch.flush(self.repo)
+        added = await self.repo.articles.insert_many(articles)
+        return added, [s.id for s in batch.new]  # type: ignore[misc]
 
-    async def _ok(self, source_id: int, now: datetime) -> None:
+    async def _ok(self, source_id: int | None, now: datetime) -> None:
+        src = await self.repo.sources.get(source_id)
+        if src is None:
+            return
         restored = None
-        async with self.repo.session() as s:
-            src = await s.get(Source, source_id)
-            if src is None:
-                return
-            src.fail_count = 0
-            src.last_ok_at = now
-            src.last_error = None
-            if not src.enabled and src.auto_disabled_at is not None:
-                src.enabled = True
-                src.auto_disabled_at = None
-                restored = src.name
-            await s.commit()
+        src.fail_count = 0
+        src.last_ok_at = now
+        src.last_error = None
+        if not src.enabled and src.auto_disabled_at is not None:
+            src.enabled = True
+            src.auto_disabled_at = None
+            restored = src.name
+        await self.repo.sources.save(src)
         if restored and self.notifier:
             await self.notifier.notify(
                 f"✅ Manba qayta ishlayapti va yoqildi: {restored}", key=f"src-ok:{source_id}"
             )
 
-    async def _fail(self, source_id: int, exc: BaseException, now: datetime) -> None:
+    async def _fail(self, source_id: int | None, exc: BaseException, now: datetime) -> None:
         err = mask_secrets(f"{type(exc).__name__}: {exc}")[:500]
         notify_text = None
-        async with self.repo.session() as s:
-            src = await s.get(Source, source_id)
-            if src is None:
-                return
-            src.fail_count += 1
-            src.last_error = err
-            if src.enabled and src.fail_count >= MAX_FAILS:
-                src.enabled = False
-                src.auto_disabled_at = now
-                notify_text = (
-                    f"⚠️ Manba {MAX_FAILS} marta ketma-ket xato berdi va vaqtincha o'chirildi: "
-                    f"{src.name}\nXato: {err}\n6 soatdan keyin qayta urinib ko'riladi. /sources"
-                )
-            elif not src.enabled and src.auto_disabled_at is not None:
-                src.auto_disabled_at = now  # qayta urinish ham muvaffaqiyatsiz — taymer yangilanadi
-            name = src.name
-            await s.commit()
+        src = await self.repo.sources.get(source_id)
+        if src is None:
+            return
+        src.fail_count += 1
+        src.last_error = err
+        if src.enabled and src.fail_count >= MAX_FAILS:
+            src.enabled = False
+            src.auto_disabled_at = now
+            notify_text = (
+                f"⚠️ Manba {MAX_FAILS} marta ketma-ket xato berdi va vaqtincha o'chirildi: "
+                f"{src.name}\nXato: {err}\n6 soatdan keyin qayta urinib ko'riladi. /sources"
+            )
+        elif not src.enabled and src.auto_disabled_at is not None:
+            src.auto_disabled_at = now  # qayta urinish ham muvaffaqiyatsiz — taymer yangilanadi
+        name = src.name
+        await self.repo.sources.save(src)
         logger.warning("Manba xatosi {}: {}", name, err)
         await self.repo.audit("collector", "error", message=f"Manba '{name}': {err}", source_id=source_id)
         if notify_text and self.notifier:

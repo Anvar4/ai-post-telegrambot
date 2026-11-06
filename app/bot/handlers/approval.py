@@ -10,13 +10,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import select
 
 from app.bot.keyboards import ApprovalCB
 from app.bot.middlewares import AdminFilter
 from app.content.schedule import upcoming_slot_times
 from app.context import AppContext
-from app.db.models import Post
 from app.pipeline.state import PostStatus, transition
 from app.utils.timeutil import to_tz, utcnow
 
@@ -43,12 +41,11 @@ def is_ready_text(text: str) -> bool:
 async def _next_free_slot(ctx: AppContext) -> datetime:
     slots = await ctx.runtime.get("slots")
     now = utcnow()
-    async with ctx.repo.session() as s:
-        taken = {
-            t.replace(second=0, microsecond=0)
-            for t in (await s.execute(select(Post.scheduled_at).where(Post.status == S.SCHEDULED))).scalars()
-            if t is not None
-        }
+    taken = {
+        p.scheduled_at.replace(second=0, microsecond=0)
+        for p in await ctx.repo.posts.find({"status": S.SCHEDULED})
+        if p.scheduled_at is not None
+    }
     for t in upcoming_slot_times(now + timedelta(minutes=5), slots, ctx.settings.tz):
         if t.astimezone(now.tzinfo).replace(second=0, microsecond=0) not in taken:
             return t
@@ -75,13 +72,12 @@ async def on_approval(
                 if post.scheduled_at and post.scheduled_at > utcnow()
                 else await _next_free_slot(ctx)
             )
-        async with ctx.repo.session() as s:
-            p = await s.get(Post, pid)
-            assert p is not None
-            p.scheduled_at = when  # type: ignore[assignment]
-            if p.status != S.SCHEDULED:
-                await transition(s, p, S.SCHEDULED, "admin", action=action)
-            await s.commit()
+        p = await ctx.repo.posts.get(pid)
+        assert p is not None
+        p.scheduled_at = when
+        if p.status != S.SCHEDULED:
+            await transition(ctx.repo, p, S.SCHEDULED, "admin", action=action)
+        await ctx.repo.posts.save(p)
         if action == "pub":
             ok = await ctx.service("publisher").publish(pid)
             await call.answer("✅ Chiqarildi" if ok else "❌ Chiqmadi — /logs ni koʻring", show_alert=not ok)
@@ -90,11 +86,10 @@ async def on_approval(
             await call.answer(f"🕒 {local:%d.%m %H:%M} ga qoʻyildi")
         await _drop_keyboard(call)
     elif action == "rej":
-        async with ctx.repo.session() as s:
-            p = await s.get(Post, pid)
-            assert p is not None
-            await transition(s, p, S.REJECTED, "admin")
-            await s.commit()
+        p = await ctx.repo.posts.get(pid)
+        assert p is not None
+        await transition(ctx.repo, p, S.REJECTED, "admin")
+        await ctx.repo.posts.save(p)
         await call.answer("❌ Rad etildi")
         await _drop_keyboard(call)
     elif action == "edit":

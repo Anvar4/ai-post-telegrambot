@@ -32,3 +32,9 @@ def test_mask_api_keys() -> None:
 
 def test_mask_leaves_normal_text() -> None:
     assert mask_secrets("Post 42 published to -1001234567890") == "Post 42 published to -1001234567890"
+
+
+def test_mask_mongodb_uri_password() -> None:
+    out = mask_secrets("connect mongodb+srv://anvar:Sup3r!Pass@cluster0.abc.mongodb.net/db failed")
+    assert "Sup3r!Pass" not in out
+    assert "mongodb+srv://anvar:***@cluster0.abc.mongodb.net" in out

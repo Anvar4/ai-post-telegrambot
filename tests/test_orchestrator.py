@@ -2,8 +2,6 @@ import json
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
-
 from app.db.models import Post, Story
 from app.pipeline.orchestrator import Pipeline
 from app.pipeline.publish import Publisher
@@ -21,8 +19,7 @@ def pipeline(ctx, now=NOW) -> Pipeline:
 
 
 async def posts(ctx) -> list[Post]:
-    async with ctx.repo.session() as s:
-        return list((await s.execute(select(Post).order_by(Post.id))).scalars())
+    return await ctx.repo.all(Post)
 
 
 async def test_full_cycle_semi_auto_reaches_pending_approval(ctx) -> None:
@@ -39,8 +36,7 @@ async def test_full_cycle_semi_auto_reaches_pending_approval(ctx) -> None:
     # qoralama adminga tugmalar bilan yuborilgan, kanalga emas
     assert {m.chat_id for m in ctx.sender.sent} == {1}
     assert any(m.kwargs.get("reply_markup") is not None for m in ctx.sender.sent)
-    async with ctx.repo.session() as s:
-        story = (await s.execute(select(Story))).scalar_one()
+    story = (await ctx.repo.all(Story))[0]
     assert story.status == "used"
 
 
@@ -122,8 +118,7 @@ async def test_reject_marks_post_and_story_rejected(ctx) -> None:
     assert await pipeline(ctx).prepare_slot("morning", SLOT_AT) is None
     (post,) = await posts(ctx)
     assert post.status == PostStatus.REJECTED
-    async with ctx.repo.session() as s:
-        story = (await s.execute(select(Story))).scalar_one()
+    story = (await ctx.repo.all(Story))[0]
     assert story.status == "rejected"
 
 
@@ -166,26 +161,24 @@ async def test_tool_slot_without_candidates_falls_back_to_tip(ctx) -> None:
 
 async def test_news_expires_after_6h_but_tool_does_not(ctx) -> None:
     created = NOW.astimezone(UTC) - timedelta(hours=7)
-    async with ctx.repo.session() as s:
-        s.add(
-            Post(
-                kind=PostKind.NEWS,
-                status=PostStatus.PENDING_APPROVAL,
-                text_html="x",
-                created_at=created,
-                approval_sent_at=created,
-            )
+    await ctx.repo.add(
+        Post(
+            kind=PostKind.NEWS,
+            status=PostStatus.PENDING_APPROVAL,
+            text_html="x",
+            created_at=created,
+            approval_sent_at=created,
         )
-        s.add(
-            Post(
-                kind=PostKind.TOOL,
-                status=PostStatus.PENDING_APPROVAL,
-                text_html="y",
-                created_at=created,
-                approval_sent_at=created,
-            )
+    )
+    await ctx.repo.add(
+        Post(
+            kind=PostKind.TOOL,
+            status=PostStatus.PENDING_APPROVAL,
+            text_html="y",
+            created_at=created,
+            approval_sent_at=created,
         )
-        await s.commit()
+    )
     await pipeline(ctx).expire_stale()
     news, tool = await posts(ctx)
     assert news.status == PostStatus.EXPIRED
@@ -194,28 +187,26 @@ async def test_news_expires_after_6h_but_tool_does_not(ctx) -> None:
 
 async def test_approval_timeout_publish_setting(ctx) -> None:
     sent = NOW.astimezone(UTC) - timedelta(minutes=31)
-    async with ctx.repo.session() as s:
-        s.add(
-            Post(
-                kind=PostKind.TOOL,
-                status=PostStatus.PENDING_APPROVAL,
-                text_html="ok",
-                created_at=sent,
-                approval_sent_at=sent,
-                scheduled_at=sent,
-            )
+    await ctx.repo.add(
+        Post(
+            kind=PostKind.TOOL,
+            status=PostStatus.PENDING_APPROVAL,
+            text_html="ok",
+            created_at=sent,
+            approval_sent_at=sent,
+            scheduled_at=sent,
         )
-        s.add(
-            Post(
-                kind=PostKind.TOOL,
-                status=PostStatus.PENDING_APPROVAL,
-                text_html="risky",
-                created_at=sent,
-                approval_sent_at=sent,
-                needs_approval=True,
-            )
+    )
+    await ctx.repo.add(
+        Post(
+            kind=PostKind.TOOL,
+            status=PostStatus.PENDING_APPROVAL,
+            text_html="risky",
+            created_at=sent,
+            approval_sent_at=sent,
+            needs_approval=True,
         )
-        await s.commit()
+    )
     p = pipeline(ctx)
     await p.expire_stale()
     assert [x.status for x in await posts(ctx)] == [PostStatus.PENDING_APPROVAL] * 2  # standart: kutadi
@@ -299,18 +290,16 @@ async def test_ai_failure_during_draft_marks_post_failed_and_tries_next_story(ct
 async def test_night_urgent_alert_does_not_expire_before_its_morning_slot(ctx) -> None:
     created = datetime(2026, 11, 6, 23, 30, tzinfo=TZ).astimezone(UTC)
     morning = datetime(2026, 11, 7, 7, 30, tzinfo=TZ).astimezone(UTC)
-    async with ctx.repo.session() as s:
-        s.add(
-            Post(
-                kind=PostKind.ALERT,
-                status=PostStatus.PENDING_APPROVAL,
-                text_html="x",
-                created_at=created,
-                approval_sent_at=created,
-                scheduled_at=morning,
-            )
+    await ctx.repo.add(
+        Post(
+            kind=PostKind.ALERT,
+            status=PostStatus.PENDING_APPROVAL,
+            text_html="x",
+            created_at=created,
+            approval_sent_at=created,
+            scheduled_at=morning,
         )
-        await s.commit()
+    )
     at_0600 = datetime(2026, 11, 7, 6, 0, tzinfo=TZ).astimezone(UTC)
     await pipeline(ctx).expire_stale(at_0600)
     assert (await posts(ctx))[0].status == PostStatus.PENDING_APPROVAL

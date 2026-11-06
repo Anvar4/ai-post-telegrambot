@@ -14,7 +14,6 @@ from app.ai.schemas import ImageReview
 from app.ai.types import Message
 from app.content.brand_image import canvas_size, render_cover
 from app.content.templates import KIND_LABEL
-from app.db.models import Post
 from app.pipeline.state import PostKind
 
 if TYPE_CHECKING:
@@ -49,11 +48,7 @@ class ImageStage:
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"{post_id}.png"
         await asyncio.to_thread(path.write_bytes, data)
-        async with self.ctx.repo.session() as s:
-            row = await s.get(Post, post_id)
-            if row is not None:
-                row.image_path = str(path)
-                await s.commit()
+        await self.ctx.repo.posts.update(post_id, {"image_path": str(path)})
         return str(path)
 
     async def make(self, *, title: str, category: str, topic: str) -> bytes | None:

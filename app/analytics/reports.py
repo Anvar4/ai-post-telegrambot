@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
-
 from app.bot.approval_view import KIND_UZ
 from app.content.formatting import escape
-from app.db.models import LLMUsage, MemberEvent, Poll, Post, SubscriberSnapshot
 from app.pipeline.state import PostStatus
 from app.utils.timeutil import day_bounds, to_tz, utcnow
 
@@ -27,23 +24,13 @@ class ReportService:
         self.clock = clock
 
     async def _posts(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
-        async with self.ctx.repo.session() as s:
-            posts = (
-                (
-                    await s.execute(
-                        select(Post)
-                        .where(
-                            Post.status == PostStatus.PUBLISHED,
-                            Post.published_at >= start,
-                            Post.published_at < end,
-                        )
-                        .order_by(Post.published_at)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            votes = dict((await s.execute(select(Poll.post_id, Poll.total_voters))).all())
+        repo = self.ctx.repo
+        posts = await repo.posts.find(
+            {"status": PostStatus.PUBLISHED, "published_at": {"$gte": start, "$lt": end}},
+            sort=[("published_at", 1)],
+        )
+        polls = await repo.polls.find({"post_id": {"$in": [p.id for p in posts]}})
+        votes = {pl.post_id: pl.total_voters for pl in polls}
         metrics = self.ctx.services.get("metrics")
         ids = [p.id for p in posts]
         reactions = await metrics.reactions_by_post(ids) if metrics else {}
@@ -71,38 +58,13 @@ class ReportService:
     async def stats(self, days: int = 7) -> dict[str, Any]:
         now = self.clock()
         start = now - timedelta(days=days)
-        async with self.ctx.repo.session() as s:
-            snaps = (
-                (
-                    await s.execute(
-                        select(SubscriberSnapshot)
-                        .where(SubscriberSnapshot.ts >= start)
-                        .order_by(SubscriberSnapshot.ts)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            last = await s.scalar(
-                select(SubscriberSnapshot.count).order_by(SubscriberSnapshot.id.desc()).limit(1)
-            )
-            events = dict(
-                (
-                    await s.execute(
-                        select(MemberEvent.event, func.count())
-                        .where(MemberEvent.ts >= start)
-                        .group_by(MemberEvent.event)
-                    )
-                ).all()
-            )
-            cost = await s.scalar(
-                select(func.coalesce(func.sum(LLMUsage.cost_usd), 0.0)).where(LLMUsage.ts >= start)
-            )
-            polls = (
-                (await s.execute(select(Poll).where(Poll.created_at >= start, Poll.total_voters > 0)))
-                .scalars()
-                .all()
-            )
+        repo = self.ctx.repo
+        snaps = await repo.snapshots.find({"ts": {"$gte": start}}, sort=[("ts", 1)])
+        latest = await repo.snapshots.find_one({}, sort=[("_id", -1)])
+        last = latest.count if latest else 0
+        events = Counter(e.event for e in await repo.member_events.find({"ts": {"$gte": start}}))
+        cost = sum(u.cost_usd for u in await repo.llm_usage.find({"ts": {"$gte": start}}))
+        polls = await repo.polls.find({"created_at": {"$gte": start}, "total_voters": {"$gt": 0}})
         invites = self.ctx.services.get("invites")
         return {
             "period_days": days,
@@ -149,19 +111,11 @@ class ReportService:
         now = now or self.clock()
         start, end = day_bounds(now, self.ctx.settings.tz)
         posts = await self._posts(start, end)
-        async with self.ctx.repo.session() as s:
-            events = dict(
-                (
-                    await s.execute(
-                        select(MemberEvent.event, func.count())
-                        .where(MemberEvent.ts >= start, MemberEvent.ts < end)
-                        .group_by(MemberEvent.event)
-                    )
-                ).all()
-            )
-            subs = await s.scalar(
-                select(SubscriberSnapshot.count).order_by(SubscriberSnapshot.id.desc()).limit(1)
-            )
+        events = Counter(
+            e.event for e in await self.ctx.repo.member_events.find({"ts": {"$gte": start, "$lt": end}})
+        )
+        latest = await self.ctx.repo.snapshots.find_one({}, sort=[("_id", -1)])
+        subs = latest.count if latest else None
         spent = await self.ctx.repo.spent_today(now)
         errors = await self.ctx.repo.count_errors(start)
         local = to_tz(now, self.ctx.settings.tz)

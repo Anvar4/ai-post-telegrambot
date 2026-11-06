@@ -10,7 +10,6 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from loguru import logger
-from sqlalchemy import select
 
 from app.bot.approval_view import KIND_UZ, send_for_approval
 from app.bot.handlers.admin import MENU_HANDLERS
@@ -18,7 +17,7 @@ from app.bot.keyboards import SourceCB
 from app.bot.middlewares import AdminFilter
 from app.content.formatting import escape
 from app.context import AppContext
-from app.db.models import Post, Source
+from app.db.models import Source
 from app.pipeline.state import PostStatus
 from app.utils.runtime import RUNTIME_DEFAULTS
 from app.utils.timeutil import parse_hhmm, to_tz, utcnow
@@ -61,19 +60,12 @@ async def cmd_post(message: Message, command: CommandObject, ctx: AppContext) ->
 
 
 async def queue_text(ctx: AppContext) -> str:
-    async with ctx.repo.session() as s:
-        rows = (
-            (
-                await s.execute(
-                    select(Post)
-                    .where(Post.status.in_((S.PENDING_APPROVAL, S.SCHEDULED)))
-                    .order_by(Post.scheduled_at.is_(None), Post.scheduled_at, Post.id)
-                    .limit(25)
-                )
-            )
-            .scalars()
-            .all()
-        )
+    rows = await ctx.repo.posts.find(
+        {"status": {"$in": [S.PENDING_APPROVAL, S.SCHEDULED]}},
+        sort=[("scheduled_at", 1), ("_id", 1)],
+        limit=25,
+    )
+    rows.sort(key=lambda p: p.scheduled_at is None)  # vaqti yo'qlar oxirida
     if not rows:
         return "🗂 Navbat boʻsh."
     lines = ["🗂 <b>Navbat</b>"]
@@ -113,13 +105,11 @@ async def cmd_time(message: Message, command: CommandObject, ctx: AppContext) ->
     target = datetime.combine(local_now.date(), parse_hhmm(parts[1]), tzinfo=local_now.tzinfo)
     if target <= local_now:
         target += timedelta(days=1)
-    async with ctx.repo.session() as s:
-        post = await s.get(Post, pid)
-        if post is None or post.status not in (S.PENDING_APPROVAL, S.SCHEDULED):
-            await message.answer("Post topilmadi yoki uning vaqtini oʻzgartirib boʻlmaydi.")
-            return
-        post.scheduled_at = target
-        await s.commit()
+    post = await ctx.repo.posts.get(pid)
+    if post is None or post.status not in (S.PENDING_APPROVAL, S.SCHEDULED):
+        await message.answer("Post topilmadi yoki uning vaqtini oʻzgartirib boʻlmaydi.")
+        return
+    await ctx.repo.posts.update(pid, {"scheduled_at": target})
     await ctx.repo.audit("admin", "reschedule", post_id=pid, at=target.isoformat())
     await message.answer(f"🕒 Post #{pid}: {target:%d.%m %H:%M}")
 
@@ -128,8 +118,7 @@ async def cmd_time(message: Message, command: CommandObject, ctx: AppContext) ->
 
 
 async def sources_view(ctx: AppContext) -> tuple[str, InlineKeyboardMarkup]:
-    async with ctx.repo.session() as s:
-        sources = (await s.execute(select(Source).order_by(Source.category, Source.id))).scalars().all()
+    sources = await ctx.repo.sources.find({}, sort=[("category", 1), ("_id", 1)])
     lines = ["📡 <b>Manbalar</b> (tugma — yoqish/oʻchirish)"]
     buttons: list[InlineKeyboardButton] = []
     for src in sources:
@@ -143,7 +132,7 @@ async def sources_view(ctx: AppContext) -> tuple[str, InlineKeyboardMarkup]:
         buttons.append(
             InlineKeyboardButton(
                 text=f"{status} {src.name[:20]}",
-                callback_data=SourceCB(action="toggle", source_id=src.id).pack(),
+                callback_data=SourceCB(action="toggle", source_id=src.id).pack(),  # type: ignore[arg-type]
             )
         )
     lines.append("\nQoʻshish: /source_add URL kategoriya [nomi]\nKategoriyalar: " + ", ".join(CATEGORIES))
@@ -161,16 +150,15 @@ async def cmd_sources(message: Message, ctx: AppContext) -> None:
 
 
 async def on_source_toggle(call: CallbackQuery, callback_data: SourceCB, ctx: AppContext) -> None:
-    async with ctx.repo.session() as s:
-        src = await s.get(Source, callback_data.source_id)
-        if src is None:
-            await call.answer("Manba topilmadi", show_alert=True)
-            return
-        src.enabled = not src.enabled
-        src.auto_disabled_at = None
-        src.fail_count = 0
-        name, enabled = src.name, src.enabled
-        await s.commit()
+    src = await ctx.repo.sources.get(callback_data.source_id)
+    if src is None:
+        await call.answer("Manba topilmadi", show_alert=True)
+        return
+    src.enabled = not src.enabled
+    src.auto_disabled_at = None
+    src.fail_count = 0
+    name, enabled = src.name, src.enabled
+    await ctx.repo.sources.save(src)
     await ctx.repo.audit("admin", "source.toggle", source_id=callback_data.source_id, enabled=enabled)
     await call.answer(f"{name}: {'yoqildi' if enabled else 'oʻchirildi'}")
 
@@ -185,12 +173,12 @@ async def cmd_source_add(message: Message, command: CommandObject, ctx: AppConte
         return
     url, category = parts[0], parts[1]
     name = parts[2] if len(parts) > 2 else url.split("/")[2]
-    async with ctx.repo.session() as s:
-        if await s.scalar(select(Source.id).where(Source.url == url)):
-            await message.answer("Bu manba allaqachon bor.")
-            return
-        s.add(Source(name=name[:200], type="rss", url=url, category=category, trust=3, lang="en"))
-        await s.commit()
+    if await ctx.repo.sources.count({"url": url}):
+        await message.answer("Bu manba allaqachon bor.")
+        return
+    await ctx.repo.sources.insert(
+        Source(name=name[:200], type="rss", url=url, category=category, trust=3, lang="en")
+    )
     await ctx.repo.audit("admin", "source.add", url=url, category=category)
     await message.answer(f"✅ Manba qoʻshildi: {escape(name)} ({category}). Keyingi yigʻishda tekshiriladi.")
 

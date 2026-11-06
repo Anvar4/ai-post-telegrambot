@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: install run test lint typecheck check migrate sources deploy logs
+.PHONY: install run test lint typecheck check sources deploy logs
 
 install:
 	$(PY) -m pip install -e ".[all,dev]"
@@ -19,9 +19,6 @@ typecheck:
 	$(PY) -m mypy
 
 check: lint typecheck test
-
-migrate:
-	$(PY) -m alembic upgrade head
 
 sources:
 	$(PY) scripts/check_sources.py

@@ -79,12 +79,11 @@ def info_text(post: Post, tz: str) -> str:
 
 
 async def send_for_approval(ctx: AppContext, post_id: int) -> None:
-    async with ctx.repo.session() as s:
-        post = await s.get(Post, post_id)
-        if post is None:
-            return
-        post.approval_sent_at = utcnow()
-        await s.commit()
+    post = await ctx.repo.posts.get(post_id)
+    if post is None:
+        return
+    post.approval_sent_at = utcnow()
+    await ctx.repo.posts.update(post_id, {"approval_sent_at": post.approval_sent_at})
     image = _load(post.image_path)
     is_poll = post.kind in (PostKind.POLL, PostKind.QUIZ)
     body = poll_preview(post) if is_poll else post.text_html

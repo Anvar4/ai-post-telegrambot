@@ -7,9 +7,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from sqlalchemy import func, select
 
-from app.db.models import Poll, Post, PostMetric, SubscriberSnapshot
+from app.db.models import Post, PostMetric, SubscriberSnapshot
 from app.pipeline.state import PostKind
 from app.utils.timeutil import utcnow
 
@@ -44,9 +43,7 @@ class MetricsService:
             return None
         count = await self.ctx.sender.member_count(chat)
         previous = await self.latest_subscribers() if await self._has_snapshot() else None
-        async with self.ctx.repo.session() as s:
-            s.add(SubscriberSnapshot(ts=self.clock(), count=count))
-            await s.commit()
+        await self.ctx.repo.snapshots.insert(SubscriberSnapshot(ts=self.clock(), count=count))
         if previous is not None:
             for milestone in MILESTONES:
                 if previous < milestone <= count:
@@ -54,8 +51,7 @@ class MetricsService:
         return count
 
     async def _has_snapshot(self) -> bool:
-        async with self.ctx.repo.session() as s:
-            return await s.scalar(select(SubscriberSnapshot.id).limit(1)) is not None
+        return await self.ctx.repo.snapshots.count() > 0
 
     async def _celebrate(self, milestone: int) -> None:
         """Marra (1000, 5000…): maxsus post va test qoralamalari — admin tasdig'i bilan (SPEC 8.4)."""
@@ -91,98 +87,69 @@ class MetricsService:
             logger.warning("Marra kontenti tayyorlanmadi: {}", exc)
 
     async def latest_subscribers(self) -> int:
-        async with self.ctx.repo.session() as s:
-            value = await s.scalar(
-                select(SubscriberSnapshot.count).order_by(SubscriberSnapshot.id.desc()).limit(1)
-            )
-        return int(value or 0)
+        snap = await self.ctx.repo.snapshots.find_one({}, sort=[("_id", -1)])
+        return int(snap.count) if snap else 0
+
+    async def _post_by_message(self, chat_id: int, message_id: int) -> Post | None:
+        return await self.ctx.repo.posts.find_one({"chat_id": chat_id, "message_id": message_id})
 
     async def on_reaction_count(
         self, chat_id: int, message_id: int, reactions: Sequence[tuple[str, int]]
     ) -> None:
-        async with self.ctx.repo.session() as s:
-            post = (
-                await s.execute(select(Post).where(Post.chat_id == chat_id, Post.message_id == message_id))
-            ).scalar_one_or_none()
-            if post is None:
-                return
-            counts = {key: int(n) for key, n in reactions}
-            s.add(
-                PostMetric(
-                    post_id=post.id,
-                    ts=self.clock(),
-                    reactions=counts,
-                    reaction_total=sum(counts.values()),
-                    comments=int((post.extra or {}).get("comments", 0)),
-                )
-            )
-            await s.commit()
+        post = await self._post_by_message(chat_id, message_id)
+        if post is None:
+            return
+        counts = {key: int(n) for key, n in reactions}
+        await self.ctx.repo.post_metrics.insert(
+            PostMetric(
+                post_id=post.id,  # type: ignore[arg-type]
+                ts=self.clock(),
+                reactions=counts,
+                reaction_total=sum(counts.values()),
+                comments=int((post.extra or {}).get("comments", 0)),
+            )  # type: ignore[arg-type]
+        )
 
     async def on_auto_forward(self, channel_message_id: int, discussion_message_id: int) -> None:
-        async with self.ctx.repo.session() as s:
-            post = (
-                await s.execute(
-                    select(Post)
-                    .where(Post.message_id == channel_message_id, Post.chat_id.in_(self._post_chats()))
-                    .order_by(Post.id.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if post is not None:
-                post.discussion_message_id = discussion_message_id
-                await s.commit()
+        post = await self.ctx.repo.posts.find_one(
+            {"message_id": channel_message_id, "chat_id": {"$in": list(self._post_chats())}},
+            sort=[("_id", -1)],
+        )
+        if post is not None:
+            await self.ctx.repo.posts.update(post.id, {"discussion_message_id": discussion_message_id})  # type: ignore[arg-type]
 
     async def on_comment(self, root_discussion_id: int | None) -> None:
         if not root_discussion_id:
             return
-        async with self.ctx.repo.session() as s:
-            post = (
-                await s.execute(select(Post).where(Post.discussion_message_id == root_discussion_id).limit(1))
-            ).scalar_one_or_none()
-            if post is None:
-                return
-            extra = dict(post.extra or {})
-            extra["comments"] = int(extra.get("comments", 0)) + 1
-            post.extra = extra
-            await s.commit()
+        await self.ctx.repo.posts.update_where(
+            {"discussion_message_id": root_discussion_id}, {"$inc": {"extra.comments": 1}}
+        )
 
     async def reactions_by_post(self, post_ids: Sequence[int]) -> dict[int, int]:
         if not post_ids:
             return {}
-        async with self.ctx.repo.session() as s:
-            latest = (
-                select(PostMetric.post_id, func.max(PostMetric.id).label("mid"))
-                .where(PostMetric.post_id.in_(post_ids))
-                .group_by(PostMetric.post_id)
-                .subquery()
-            )
-            rows = (
-                await s.execute(
-                    select(PostMetric.post_id, PostMetric.reaction_total).join(
-                        latest, PostMetric.id == latest.c.mid
-                    )
-                )
-            ).all()
-        return {pid: int(total) for pid, total in rows}
+        rows = await self.ctx.repo.post_metrics.find({"post_id": {"$in": list(post_ids)}}, sort=[("_id", 1)])
+        latest: dict[int, int] = {}
+        for m in rows:  # oxirgi yozuv ustun keladi
+            latest[m.post_id] = m.reaction_total
+        return latest
 
     async def engagement_by_post(self, post_ids: Sequence[int]) -> dict[int, float]:
         if not post_ids:
             return {}
         subs = await self.latest_subscribers()
         reactions = await self.reactions_by_post(post_ids)
-        async with self.ctx.repo.session() as s:
-            posts = (await s.execute(select(Post.id, Post.extra).where(Post.id.in_(post_ids)))).all()
-            votes = dict(
-                (
-                    await s.execute(select(Poll.post_id, Poll.total_voters).where(Poll.post_id.in_(post_ids)))
-                ).all()
-            )
+        posts = await self.ctx.repo.posts.find({"_id": {"$in": list(post_ids)}})
+        votes = {
+            p.post_id: p.total_voters
+            for p in await self.ctx.repo.polls.find({"post_id": {"$in": list(post_ids)}})
+        }
         return {
-            pid: engagement_score(
-                reactions=reactions.get(pid, 0),
-                comments=int((extra or {}).get("comments", 0)),
-                poll_votes=int(votes.get(pid) or 0),
+            p.id: engagement_score(  # type: ignore[misc]
+                reactions=reactions.get(p.id, 0),  # type: ignore[arg-type]
+                comments=int((p.extra or {}).get("comments", 0)),
+                poll_votes=int(votes.get(p.id) or 0),
                 subscribers=subs,
             )
-            for pid, extra in posts
+            for p in posts
         }

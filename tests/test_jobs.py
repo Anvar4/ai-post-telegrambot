@@ -1,11 +1,9 @@
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
-
 from app.content.schedule import upcoming_slot_times
 from app.context import set_ctx
-from app.db.models import AuditLog, Post
+from app.db.models import Post
 from app.pipeline.orchestrator import Pipeline
 from app.pipeline.state import PostKind, PostStatus
 from app.scheduler import jobs
@@ -66,8 +64,7 @@ async def test_job_errors_are_reported(ctx) -> None:
     finally:
         set_ctx(None)
     assert any("collect" in m[0] for m in ctx.notifier.messages)
-    async with ctx.repo.session() as s:
-        rows = (await s.execute(select(AuditLog).where(AuditLog.action == "error"))).scalars().all()
+    rows = await ctx.repo.audit_log.find({"action": "error"})
     assert rows and "manba portladi" in rows[0].details["message"]
 
 
@@ -93,21 +90,19 @@ def test_upcoming_slot_times() -> None:
 async def test_digest_uses_published_posts_with_links(ctx) -> None:
     llms = make_llms(ctx)
     now = datetime(2026, 11, 8, 19, 15, tzinfo=TZ)
-    async with ctx.repo.session() as s:
-        for i in range(4):
-            s.add(
-                Post(
-                    kind=PostKind.NEWS,
-                    status=PostStatus.PUBLISHED,
-                    text_html="x",
-                    title_short=f"Post {i}",
-                    message_id=100 + i,
-                    chat_id=-1002,
-                    published_at=now.astimezone(UTC) - timedelta(days=1),
-                    score=60 + i,
-                )
+    for i in range(4):
+        await ctx.repo.add(
+            Post(
+                kind=PostKind.NEWS,
+                status=PostStatus.PUBLISHED,
+                text_html="x",
+                title_short=f"Post {i}",
+                message_id=100 + i,
+                chat_id=-1002,
+                published_at=now.astimezone(UTC) - timedelta(days=1),
+                score=60 + i,
             )
-        await s.commit()
+        )
     p = Pipeline(ctx, clock=lambda: now.astimezone(UTC))
     pid = await p.prepare_digest(datetime(2026, 11, 8, 20, 0, tzinfo=TZ))
     post = await ctx.repo.get_post(pid)

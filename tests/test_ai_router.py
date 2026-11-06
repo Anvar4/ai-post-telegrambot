@@ -2,7 +2,6 @@ import asyncio
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy import select
 
 from app.ai.router import AIRouter
 from app.ai.schemas import CheckOutput
@@ -138,25 +137,23 @@ async def test_timeout_counts_as_failure() -> None:
     assert res.text == "ok"
 
 
-async def test_usage_recorded_with_cost(repo, sessionmaker) -> None:
+async def test_usage_recorded_with_cost(repo) -> None:
     editor = ScriptedLLM(model="gpt-6-sol", script=["ok"], tokens=(1_000_000, 0))
     router, _ = make_router(repo, editor=editor)
     await router.complete("editor", MSGS)
-    async with sessionmaker() as s:
-        row = (await s.execute(select(LLMUsage))).scalar_one()
+    row = (await repo.all(LLMUsage))[0]
     assert row.role == "editor"
     assert row.model == "gpt-6-sol"
     assert row.ok is True
     assert abs(row.cost_usd - 2.0) < 1e-9
 
 
-async def test_failed_attempts_recorded_as_not_ok(repo, sessionmaker) -> None:
+async def test_failed_attempts_recorded_as_not_ok(repo) -> None:
     writer = ScriptedLLM(provider="anthropic", model="claude-x", script=[RuntimeError("a")] * 3)
     editor = ScriptedLLM(script=["ok"])
     router, _ = make_router(repo, writer=writer, editor=editor)
     await router.complete("writer", MSGS)
-    async with sessionmaker() as s:
-        rows = (await s.execute(select(LLMUsage).order_by(LLMUsage.id))).scalars().all()
+    rows = await repo.all(LLMUsage)
     assert [r.ok for r in rows] == [False, False, False, True]
 
 

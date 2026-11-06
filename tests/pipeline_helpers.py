@@ -131,29 +131,25 @@ async def seed_story(
     summary: str = "Google patched CVE-2026-1234 exploited in the wild.",
     source_category: str = "kiber",
 ) -> int:
-    async with ctx.repo.session() as s:
-        src = Source(
-            name="BleepingComputer",
-            type="rss",
-            url=f"https://bc.example/feed/{title[:10]}",
-            category=source_category,
-            trust=4,
+    src = Source(
+        name="BleepingComputer",
+        type="rss",
+        url=f"https://bc.example/feed/{title[:10]}",
+        category=source_category,
+        trust=4,
+    )
+    await ctx.repo.add(src)
+    st = Story(title=title, status="new", source_category=source_category, first_seen=now, last_seen=now)
+    await ctx.repo.add(st)
+    await ctx.repo.add(
+        Article(
+            source_id=src.id,
+            url=SRC_URL,
+            url_hash=f"h-{st.id}",
+            title=title,
+            summary=summary,
+            story_id=st.id,
+            fetched_at=now,
         )
-        s.add(src)
-        await s.flush()
-        st = Story(title=title, status="new", source_category=source_category, first_seen=now, last_seen=now)
-        s.add(st)
-        await s.flush()
-        s.add(
-            Article(
-                source_id=src.id,
-                url=SRC_URL,
-                url_hash=f"h-{st.id}",
-                title=title,
-                summary=summary,
-                story_id=st.id,
-                fetched_at=now,
-            )
-        )
-        await s.commit()
-        return st.id
+    )
+    return st.id

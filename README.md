@@ -113,6 +113,9 @@ cp .env.example .env
 | `IMAGE_MODEL` | Rasm modeli | `gpt-image-2` |
 | `IMAGE_API_KEY` | 2-kalit | `sk-…` |
 | `OPENAI_API_KEY` | 3-kalit (`gpt-6-sol` va `gpt-6-luna` uchun) | `sk-…` |
+| `MONGODB_URI` | MongoDB ulanish manzili (Atlas: Connect → Drivers) | `mongodb+srv://user:parol@cluster…/` |
+| `MONGODB_DB` | Bot bazasi nomi (boshqa bazalarga tegmaydi) | `it_dunyosi_bot` |
+| `PEXELS_API_KEY` | Rasm qidirish uchun (bepul) | `…` |
 | `DAILY_BUDGET_USD` | Kunlik AI budjeti | `3` |
 
 Ixtiyoriy kalitlar: `NVD_API_KEY` (NVD limitini oshiradi), `GITHUB_TOKEN` (GitHub API limiti), `HASH_SALT` (boʻsh qolsa avtomatik yaratiladi), `MODEL_PRICES_JSON` (model narxlarini aniqlashtirish).
@@ -128,6 +131,7 @@ Ixtiyoriy kalitlar: `NVD_API_KEY` (NVD limitini oshiradi), `GITHUB_TOKEN` (GitHu
 | `python scripts/check_telegram.py` | Token, privacy rejimi, kanal va guruhlardagi admin huquqlari | Yoʻq (faqat oʻqiydi) |
 | `python scripts/check_ai.py` | AI kalitlari, `gpt-6-sol`/`gpt-6-luna` va yozuvchi model mavjudligi | Yoʻq (modellar roʻyxati) |
 | `python scripts/check_sources.py` | Har bir manbadan haqiqiy maʼlumot kelishi | Yoʻq |
+| `python scripts/check_mongo.py` | MongoDB ulanishi, indekslar, vaqt zonasi, atomik yozuv (vaqtinchalik bazada, keyin oʻchiradi) | Yoʻq |
 | `python scripts/golden_test.py 5` | "Oltin test": 5 ta haqiqiy maqola → post → fakt-tekshiruv. Telegram ga **hech narsa yubormaydi** | Ha, ~$0.1–0.3 |
 
 `golden_test.py` natijalari `data/golden/results.json` ga yoziladi. Ularni oʻqib, post sifatini va tekshiruvchi qanday ishlayotganini koʻring.
@@ -145,7 +149,7 @@ pip install -e ".[all,dev]"
 python -m app
 ```
 
-Ishga tushganda bot `data/bot.db` bazasini yaratadi, manbalar roʻyxatini qoʻshadi va sizga **"✅ Bot ishga tushdi"** xabarini yuboradi. Sozlamalarda muammo boʻlsa, ular shu xabarda koʻrsatiladi.
+Ishga tushganda bot MongoDB dagi `MONGODB_DB` (standart `it_dunyosi_bot`) bazasiga ulanadi, indekslarni yaratadi, manbalar roʻyxatini qoʻshadi va sizga **"✅ Bot ishga tushdi"** xabarini yuboradi. Sozlamalarda muammo boʻlsa, ular shu xabarda koʻrsatiladi.
 
 ---
 
@@ -171,7 +175,7 @@ docker compose logs -f --tail=100 bot
 
 - **Faqat kerakli provayderlarni oʻrnatish:** `docker-compose.yml` dagi `EXTRAS` ni oʻzgartiring (`anthropic`, `gemini` yoki `all`). DeepSeek va OpenAI uchun qoʻshimcha paket kerak emas.
 - **Oʻzini tiklash:** bot har daqiqada `data/heartbeat` faylini yangilaydi. 10 daqiqa yangilanmasa, healthcheck jarayonni toʻxtatadi va Docker uni qayta ishga tushiradi (`restart: unless-stopped`).
-- **Backup:** har kuni 03:00 da `data/backups/` ga olinadi va 7 kun saqlanadi. Dushanba kunlari nusxa sizga Telegram orqali ham keladi.
+- **Backup:** har kuni 03:00 da barcha kolleksiyalar `data/backups/bot-…jsonl.gz` ga eksport qilinadi va 7 kun saqlanadi. Dushanba kunlari nusxa sizga Telegram orqali ham keladi. (Atlas bepul tarifida avtomatik backup yoʻq — shu eksport yordam beradi.)
 - **Yangilash:** `make deploy` (yoki `git pull && docker compose up -d --build`). Baza migratsiyalari avtomatik bajariladi.
 
 ---
@@ -260,6 +264,7 @@ Yangiliklar 6 soat ichida tasdiqlanmasa eskiradi (`EXPIRED`). Ilova, sayt va mas
 | Belgisi | Sabab va yechim |
 |---|---|
 | Bot ishga tushmaydi, ".env da notoʻgʻri qiymatlar" | Xabarda koʻrsatilgan kalitni tuzating (masalan, `CHANNEL_ID` raqam boʻlishi kerak) |
+| "MongoDB ulanishini tekshiring" | `python scripts/check_mongo.py`; Atlas → Network Access da server IP manzili ruxsat etilganmi? |
 | "chat not found" | Bot kanal yoki guruhga admin qilinmagan yoki ID notoʻgʻri. Guruh kanalga ulangach ID `-100…` ga oʻzgaradi |
 | Izohlar moderatsiya qilinmayapti | BotFather → `/setprivacy` → Disable; `DISCUSSION_GROUP_ID` toʻgʻri superguruh ID simi? |
 | Qoralamalar kelmayapti | `/status` (rejim `manual` emasmi, `/pause` holatida emasmi?), `/logs`, `/sources` |
@@ -280,6 +285,6 @@ make sources   # manbalarni tekshirish
 ```
 
 - Kod tuzilmasi va qoidalar `CLAUDE.md` da, amalga oshirish rejasi `docs/superpowers/plans/` da.
-- Baza: SQLite (`DATABASE_URL`) va Alembic migratsiyalari. PostgreSQL ga oʻtish uchun `DATABASE_URL=postgresql+asyncpg://…` qiling va `asyncpg` hamda `psycopg` ni oʻrnating.
+- Baza: MongoDB (`MONGODB_URI`, `MONGODB_DB`). Kolleksiyalar va indekslar ishga tushganda avtomatik yaratiladi; migratsiya kerak emas. Testlar mongomock asosidagi soxta bazada ishlaydi.
 - Shriftlar: Inter (SIL Open Font License, `assets/fonts/OFL.txt`).
 - Kiritilmagan imkoniyatlar (SPEC 7-bosqich): Telethon orqali koʻrishlar statistikasi va webhook. Hozircha long polling ishlatiladi.

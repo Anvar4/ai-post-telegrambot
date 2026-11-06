@@ -1,258 +1,213 @@
-"""SQLAlchemy 2 modellari (SPEC 10-bo'lim)."""
+"""MongoDB hujjatlari (SPEC 10-bo'lim jadvallari). `id` — butun son, Mongo da `_id`."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import Any
-
-from sqlalchemy import (
-    JSON,
-    BigInteger,
-    Boolean,
-    DateTime,
-    Float,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    TypeDecorator,
-)
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, ClassVar
 
 from app.utils.timeutil import utcnow
 
 
-class UTCDateTime(TypeDecorator[datetime]):
-    """Aware datetime qabul qiladi, UTC (naive) saqlaydi, aware UTC qaytaradi."""
-
-    impl = DateTime
-    cache_ok = True
-
-    def process_bind_param(self, value: datetime | None, dialect: Any) -> datetime | None:
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
-        return value.astimezone(UTC).replace(tzinfo=None)
-
-    def process_result_value(self, value: datetime | None, dialect: Any) -> datetime | None:
-        if value is None:
-            return None
-        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+@dataclass(kw_only=True)
+class Doc:
+    __collection__: ClassVar[str] = ""
+    id: int | None = None
 
 
-class Base(DeclarativeBase):
-    type_annotation_map = {
-        datetime: UTCDateTime,
-        dict[str, Any]: JSON,
-        list[Any]: JSON,
-        list[str]: JSON,
-        list[int]: JSON,
-    }
+@dataclass(kw_only=True)
+class Source(Doc):
+    __collection__ = "sources"
+    name: str
+    type: str  # rss | cisa_kev | nvd | hackernews | github
+    url: str
+    category: str
+    trust: int = 3
+    lang: str = "en"
+    enabled: bool = True
+    last_ok_at: datetime | None = None
+    fail_count: int = 0
+    last_error: str | None = None
+    auto_disabled_at: datetime | None = None
+    created_at: datetime = field(default_factory=utcnow)
 
 
-class Source(Base):
-    __tablename__ = "sources"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(200))
-    type: Mapped[str] = mapped_column(String(30))  # rss | cisa_kev | nvd | hackernews | github
-    url: Mapped[str] = mapped_column(String(1000), unique=True)
-    category: Mapped[str] = mapped_column(String(50))
-    trust: Mapped[int] = mapped_column(Integer, default=3)
-    lang: Mapped[str] = mapped_column(String(10), default="en")
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_ok_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    fail_count: Mapped[int] = mapped_column(Integer, default=0)
-    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    auto_disabled_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+@dataclass(kw_only=True)
+class Article(Doc):
+    __collection__ = "articles"
+    source_id: int | None = None
+    url: str
+    url_hash: str
+    title: str
+    summary: str | None = None
+    content_text: str | None = None
+    published_at: datetime | None = None
+    lang: str = "en"
+    story_id: int | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+    fetched_at: datetime = field(default_factory=utcnow)
 
 
-class Article(Base):
-    __tablename__ = "articles"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    source_id: Mapped[int | None] = mapped_column(
-        ForeignKey("sources.id", ondelete="SET NULL"), nullable=True
-    )
-    url: Mapped[str] = mapped_column(String(2000))
-    url_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    title: Mapped[str] = mapped_column(String(1000))
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    published_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    lang: Mapped[str] = mapped_column(String(10), default="en")
-    story_id: Mapped[int | None] = mapped_column(
-        ForeignKey("stories.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    extra: Mapped[dict[str, Any]] = mapped_column(default=dict)
-    fetched_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+@dataclass(kw_only=True)
+class Story(Doc):
+    __collection__ = "stories"
+    title: str
+    category: str | None = None
+    source_category: str | None = None
+    article_count: int = 1
+    first_seen: datetime = field(default_factory=utcnow)
+    last_seen: datetime = field(default_factory=utcnow)
+    score: int | None = None
+    is_breaking: bool = False
+    status: str = "new"
+    scored_at: datetime | None = None
+    why_uz: str | None = None
+    risk_flags: list[str] = field(default_factory=list)
 
 
-class Story(Base):
-    __tablename__ = "stories"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    title: Mapped[str] = mapped_column(String(1000))
-    category: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    source_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    article_count: Mapped[int] = mapped_column(Integer, default=1)
-    first_seen: Mapped[datetime] = mapped_column(default=utcnow, index=True)
-    last_seen: Mapped[datetime] = mapped_column(default=utcnow)
-    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    is_breaking: Mapped[bool] = mapped_column(Boolean, default=False)
-    status: Mapped[str] = mapped_column(String(20), default="new", index=True)
-    scored_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    why_uz: Mapped[str | None] = mapped_column(Text, nullable=True)
-    risk_flags: Mapped[list[str]] = mapped_column(default=list)
-
-
-class Post(Base):
-    __tablename__ = "posts"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    story_id: Mapped[int | None] = mapped_column(ForeignKey("stories.id", ondelete="SET NULL"), nullable=True)
-    kind: Mapped[str] = mapped_column(String(20))
-    text_html: Mapped[str] = mapped_column(Text, default="")
-    title_short: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    hashtags: Mapped[list[str]] = mapped_column(default=list)
-    image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    image_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_urls: Mapped[list[str]] = mapped_column(default=list)
-    status: Mapped[str] = mapped_column(String(20), default="NEW", index=True)
-    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    check_report: Mapped[dict[str, Any]] = mapped_column(default=dict)
-    needs_approval: Mapped[bool] = mapped_column(Boolean, default=False)
-    approval_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    scheduled_at: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
-    published_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    discussion_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
-    publish_key: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
-    created_by: Mapped[str] = mapped_column(String(10), default="ai")
-    slot: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    approval_sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    extra: Mapped[dict[str, Any]] = mapped_column(default=dict)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=utcnow)
+@dataclass(kw_only=True)
+class Post(Doc):
+    __collection__ = "posts"
+    story_id: int | None = None
+    kind: str
+    text_html: str = ""
+    title_short: str | None = None
+    hashtags: list[str] = field(default_factory=list)
+    image_path: str | None = None
+    image_prompt: str | None = None
+    source_urls: list[str] = field(default_factory=list)
+    status: str = "NEW"
+    score: int | None = None
+    check_report: dict[str, Any] = field(default_factory=dict)
+    needs_approval: bool = False
+    approval_reason: str | None = None
+    scheduled_at: datetime | None = None
+    published_at: datetime | None = None
+    message_id: int | None = None
+    chat_id: int | None = None
+    discussion_message_id: int | None = None
+    publish_key: str | None = None
+    created_by: str = "ai"
+    slot: str | None = None
+    attempts: int = 0
+    approval_sent_at: datetime | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=utcnow)
+    updated_at: datetime = field(default_factory=utcnow)
 
 
-class Poll(Base):
-    __tablename__ = "polls"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    post_id: Mapped[int | None] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), nullable=True)
-    telegram_poll_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    question: Mapped[str] = mapped_column(String(400))
-    options: Mapped[list[str]] = mapped_column(default=list)
-    correct_option_ids: Mapped[list[int]] = mapped_column(default=list)
-    explanation: Mapped[str | None] = mapped_column(String(400), nullable=True)
-    results: Mapped[dict[str, Any]] = mapped_column(default=dict)
-    total_voters: Mapped[int] = mapped_column(Integer, default=0)
-    purpose: Mapped[str] = mapped_column(String(20), default="fun")  # fun | research | quiz
-    topic: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    closed: Mapped[bool] = mapped_column(Boolean, default=False)
-    closes_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)
-
-
-class PostMetric(Base):
-    __tablename__ = "post_metrics"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    post_id: Mapped[int] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), index=True)
-    ts: Mapped[datetime] = mapped_column(default=utcnow)
-    reactions: Mapped[dict[str, Any]] = mapped_column(default=dict)
-    reaction_total: Mapped[int] = mapped_column(Integer, default=0)
-    comments: Mapped[int] = mapped_column(Integer, default=0)
+@dataclass(kw_only=True)
+class Poll(Doc):
+    __collection__ = "polls"
+    post_id: int | None = None
+    telegram_poll_id: str | None = None
+    question: str
+    options: list[str] = field(default_factory=list)
+    correct_option_ids: list[int] = field(default_factory=list)
+    explanation: str | None = None
+    results: dict[str, Any] = field(default_factory=dict)
+    total_voters: int = 0
+    purpose: str = "fun"  # fun | research | quiz
+    topic: str | None = None
+    closed: bool = False
+    closes_at: datetime | None = None
+    created_at: datetime = field(default_factory=utcnow)
 
 
-class SubscriberSnapshot(Base):
-    __tablename__ = "subscriber_snapshots"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ts: Mapped[datetime] = mapped_column(default=utcnow, index=True)
-    count: Mapped[int] = mapped_column(Integer)
-
-
-class InviteLink(Base):
-    __tablename__ = "invite_links"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100))
-    url: Mapped[str] = mapped_column(String(500), unique=True)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)
-    joins: Mapped[int] = mapped_column(Integer, default=0)
-    leaves: Mapped[int] = mapped_column(Integer, default=0)
+@dataclass(kw_only=True)
+class PostMetric(Doc):
+    __collection__ = "post_metrics"
+    post_id: int
+    ts: datetime = field(default_factory=utcnow)
+    reactions: dict[str, Any] = field(default_factory=dict)
+    reaction_total: int = 0
+    comments: int = 0
 
 
-class MemberEvent(Base):
-    __tablename__ = "member_events"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ts: Mapped[datetime] = mapped_column(default=utcnow, index=True)
-    user_hash: Mapped[str] = mapped_column(String(64), index=True)
-    event: Mapped[str] = mapped_column(String(10))  # join | leave
-    invite_link_id: Mapped[int | None] = mapped_column(
-        ForeignKey("invite_links.id", ondelete="SET NULL"), nullable=True
-    )
+@dataclass(kw_only=True)
+class SubscriberSnapshot(Doc):
+    __collection__ = "subscriber_snapshots"
+    ts: datetime = field(default_factory=utcnow)
+    count: int
 
 
-class QALog(Base):
-    __tablename__ = "qa_logs"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_hash: Mapped[str] = mapped_column(String(64), index=True)
-    channel: Mapped[str] = mapped_column(String(20))  # dm | comments | channel_dm
-    question: Mapped[str] = mapped_column(Text)
-    answer: Mapped[str] = mapped_column(Text, default="")
-    flagged: Mapped[bool] = mapped_column(Boolean, default=False)
-    ts: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+@dataclass(kw_only=True)
+class InviteLink(Doc):
+    __collection__ = "invite_links"
+    name: str
+    url: str
+    created_at: datetime = field(default_factory=utcnow)
+    joins: int = 0
+    leaves: int = 0
 
 
-class ModerationEvent(Base):
-    __tablename__ = "moderation_events"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ts: Mapped[datetime] = mapped_column(default=utcnow, index=True)
-    chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    user_hash: Mapped[str] = mapped_column(String(64), index=True)
-    excerpt: Mapped[str] = mapped_column(String(300))
-    label: Mapped[str] = mapped_column(String(20))
-    action: Mapped[str] = mapped_column(String(20))
+@dataclass(kw_only=True)
+class MemberEvent(Doc):
+    __collection__ = "member_events"
+    ts: datetime = field(default_factory=utcnow)
+    user_hash: str
+    event: str  # join | leave
+    invite_link_id: int | None = None
 
 
-class LLMUsage(Base):
-    __tablename__ = "llm_usage"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ts: Mapped[datetime] = mapped_column(default=utcnow, index=True)
-    role: Mapped[str] = mapped_column(String(20))
-    provider: Mapped[str] = mapped_column(String(30))
-    model: Mapped[str] = mapped_column(String(100))
-    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    cached_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
-    ok: Mapped[bool] = mapped_column(Boolean, default=True)
-    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+@dataclass(kw_only=True)
+class QALog(Doc):
+    __collection__ = "qa_logs"
+    user_hash: str
+    channel: str  # dm | comments | channel_dm
+    question: str
+    answer: str = ""
+    flagged: bool = False
+    ts: datetime = field(default_factory=utcnow)
 
 
-class Setting(Base):
-    __tablename__ = "settings"
+@dataclass(kw_only=True)
+class ModerationEvent(Doc):
+    __collection__ = "moderation_events"
+    ts: datetime = field(default_factory=utcnow)
+    chat_id: int | None = None
+    user_hash: str
+    excerpt: str
+    label: str
+    action: str
 
-    key: Mapped[str] = mapped_column(String(100), primary_key=True)
-    value: Mapped[Any] = mapped_column(JSON)
+
+@dataclass(kw_only=True)
+class LLMUsage(Doc):
+    __collection__ = "llm_usage"
+    ts: datetime = field(default_factory=utcnow)
+    role: str
+    provider: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    cost_usd: float = 0.0
+    ok: bool = True
+    error: str | None = None
 
 
-class AuditLog(Base):
-    __tablename__ = "audit_log"
+@dataclass(kw_only=True)
+class AuditLog(Doc):
+    __collection__ = "audit_log"
+    ts: datetime = field(default_factory=utcnow)
+    actor: str
+    action: str
+    details: dict[str, Any] = field(default_factory=dict)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ts: Mapped[datetime] = mapped_column(default=utcnow, index=True)
-    actor: Mapped[str] = mapped_column(String(30))
-    action: Mapped[str] = mapped_column(String(50), index=True)
-    details: Mapped[dict[str, Any]] = mapped_column(default=dict)
+
+ALL_MODELS: tuple[type[Doc], ...] = (
+    Source,
+    Article,
+    Story,
+    Post,
+    Poll,
+    PostMetric,
+    SubscriberSnapshot,
+    InviteLink,
+    MemberEvent,
+    QALog,
+    ModerationEvent,
+    LLMUsage,
+    AuditLog,
+)

@@ -17,7 +17,6 @@ from aiogram.types import (
 from aiogram.types import (
     Poll as TgPoll,
 )
-from sqlalchemy import select
 
 from app.analytics.growth import GrowthService
 from app.analytics.invites import InviteService
@@ -48,20 +47,18 @@ def services(ctx):
 async def add_published(
     ctx, *, message_id=500, chat_id=-1001, title="Post", kind=PostKind.NEWS, hours_ago=2
 ) -> int:
-    async with ctx.repo.session() as s:
-        post = Post(
-            kind=kind,
-            status=PostStatus.PUBLISHED,
-            text_html="x",
-            title_short=title,
-            chat_id=chat_id,
-            message_id=message_id,
-            published_at=utcnow() - timedelta(hours=hours_ago),
-            score=70,
-        )
-        s.add(post)
-        await s.commit()
-        return post.id
+    post = Post(
+        kind=kind,
+        status=PostStatus.PUBLISHED,
+        text_html="x",
+        title_short=title,
+        chat_id=chat_id,
+        message_id=message_id,
+        published_at=utcnow() - timedelta(hours=hours_ago),
+        score=70,
+    )
+    await ctx.repo.add(post)
+    return post.id
 
 
 def test_engagement_formula() -> None:
@@ -73,8 +70,7 @@ async def test_snapshot_saves_member_count(ctx) -> None:
     ctx.sender.members = 1234
     svc = services(ctx)
     await svc["metrics"].snapshot()
-    async with ctx.repo.session() as s:
-        snap = (await s.execute(select(SubscriberSnapshot))).scalar_one()
+    snap = (await ctx.repo.all(SubscriberSnapshot))[0]
     assert snap.count == 1234
 
 
@@ -83,8 +79,7 @@ async def test_reaction_update_stored(ctx) -> None:
     pid = await add_published(ctx)
     await svc["metrics"].on_reaction_count(-1001, 500, [("👍", 3), ("🔥", 2)])
     await svc["metrics"].on_reaction_count(-1001, 999, [("👍", 1)])  # noma'lum post — e'tiborsiz
-    async with ctx.repo.session() as s:
-        rows = (await s.execute(select(PostMetric))).scalars().all()
+    rows = await ctx.repo.all(PostMetric)
     assert len(rows) == 1
     assert rows[0].post_id == pid and rows[0].reaction_total == 5 and rows[0].reactions == {"👍": 3, "🔥": 2}
 
@@ -120,9 +115,8 @@ async def test_join_via_named_link_counted_and_leave_attributed(ctx) -> None:
     await svc["invites"].on_member_update(CHANNEL, 77, "left", "member", url)
     await svc["invites"].on_member_update(CHANNEL, 78, "left", "member", None)
     await svc["invites"].on_member_update(CHANNEL, 77, "member", "left", None)
-    async with ctx.repo.session() as s:
-        link = (await s.execute(select(InviteLink))).scalar_one()
-        events = (await s.execute(select(MemberEvent).order_by(MemberEvent.id))).scalars().all()
+    link = (await ctx.repo.all(InviteLink))[0]
+    events = await ctx.repo.all(MemberEvent)
     assert (link.joins, link.leaves) == (1, 1)
     assert [e.event for e in events] == ["join", "join", "leave"]
     assert all("77" not in e.user_hash for e in events)
@@ -132,13 +126,13 @@ async def test_invite_stats_retention_after_7_days(ctx) -> None:
     svc = services(ctx)
     url = await svc["invites"].create("reklama")
     old = utcnow() - timedelta(days=10)
-    async with ctx.repo.session() as s:
-        link = (await s.execute(select(InviteLink))).scalar_one()
-        link.joins = 2
-        s.add(MemberEvent(ts=old, user_hash="a", event="join", invite_link_id=link.id))
-        s.add(MemberEvent(ts=old, user_hash="b", event="join", invite_link_id=link.id))
-        s.add(MemberEvent(ts=old + timedelta(days=2), user_hash="b", event="leave", invite_link_id=link.id))
-        await s.commit()
+    link = (await ctx.repo.all(InviteLink))[0]
+    link.joins = 2
+    await ctx.repo.add(MemberEvent(ts=old, user_hash="a", event="join", invite_link_id=link.id))
+    await ctx.repo.add(MemberEvent(ts=old, user_hash="b", event="join", invite_link_id=link.id))
+    await ctx.repo.add(
+        MemberEvent(ts=old + timedelta(days=2), user_hash="b", event="leave", invite_link_id=link.id)
+    )
     stats = await svc["invites"].stats()
     assert stats[0]["name"] == "reklama" and stats[0]["url"] == url
     assert stats[0]["retained_7d"] == 1
@@ -147,8 +141,7 @@ async def test_invite_stats_retention_after_7_days(ctx) -> None:
 async def test_member_updates_for_other_chats_ignored(ctx) -> None:
     svc = services(ctx)
     await svc["invites"].on_member_update(-100555, 77, "left", "member", None)
-    async with ctx.repo.session() as s:
-        assert (await s.execute(select(MemberEvent))).first() is None
+    assert await ctx.repo.all(MemberEvent) == []
 
 
 async def test_daily_report_contains_numbers(ctx) -> None:
@@ -223,9 +216,7 @@ async def test_stats_link_and_plain_text_commands(ctx) -> None:
 
 async def test_poll_update_handler(ctx) -> None:
     services(ctx)
-    async with ctx.repo.session() as s:
-        s.add(Poll(question="q", options=["a", "b"], purpose="fun", telegram_poll_id="tp1"))
-        await s.commit()
+    await ctx.repo.add(Poll(question="q", options=["a", "b"], purpose="fun", telegram_poll_id="tp1"))
     dp, bot = build_dispatcher(ctx), make_bot()
     poll = TgPoll(
         id="tp1",
@@ -243,8 +234,7 @@ async def test_poll_update_handler(ctx) -> None:
         members_only=False,
     )
     await dp.feed_update(bot, Update(update_id=880001, poll=poll))
-    async with ctx.repo.session() as s:
-        row = (await s.execute(select(Poll))).scalar_one()
+    row = (await ctx.repo.all(Poll))[0]
     assert row.results == {"a": 3, "b": 1}
 
 
@@ -289,9 +279,8 @@ async def test_reaction_and_chat_member_handlers(ctx) -> None:
             ),
         ),
     )
-    async with ctx.repo.session() as s:
-        metric = (await s.execute(select(PostMetric))).scalar_one()
-        link = (await s.execute(select(InviteLink))).scalar_one()
+    metric = (await ctx.repo.all(PostMetric))[0]
+    link = (await ctx.repo.all(InviteLink))[0]
     assert metric.post_id == pid and metric.reaction_total == 4
     assert link.joins == 1
 

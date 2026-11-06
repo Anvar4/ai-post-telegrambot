@@ -64,13 +64,11 @@ async def test_budget_exceeded_raises_for_non_essential_only(repo) -> None:
     assert len(notifier.messages) == 1  # 100% xabari bir marta
 
 
-async def test_budget_warning_resets_next_day(repo, sessionmaker) -> None:
+async def test_budget_warning_resets_next_day(repo) -> None:
     d1 = datetime(2026, 11, 6, 6, tzinfo=UTC)
     d2 = datetime(2026, 11, 7, 6, tzinfo=UTC)
-    async with sessionmaker() as s:
-        for ts in (d1, d2):
-            s.add(LLMUsage(ts=ts, role="w", provider="p", model="m", cost_usd=0.9, ok=True))
-        await s.commit()
+    for ts in (d1, d2):
+        await repo.add(LLMUsage(ts=ts, role="w", provider="p", model="m", cost_usd=0.9, ok=True))
     notifier = FakeNotifier()
     now = [d1]
     guard = BudgetGuard(repo, daily_budget=1.0, notifier=notifier, clock=lambda: now[0])

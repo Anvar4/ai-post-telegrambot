@@ -1,8 +1,5 @@
-from sqlalchemy import func, select
-
 from app.collectors.seed import SEED_SOURCES, seed_sources
 from app.collectors.service import FETCHERS
-from app.db.models import Source
 
 
 async def test_seed_sources_idempotent(repo) -> None:
@@ -10,8 +7,7 @@ async def test_seed_sources_idempotent(repo) -> None:
     second = await seed_sources(repo)
     assert first == len(SEED_SOURCES)
     assert second == 0
-    async with repo.session() as s:
-        assert await s.scalar(select(func.count()).select_from(Source)) == len(SEED_SOURCES)
+    assert await repo.sources.count() == len(SEED_SOURCES)
 
 
 def test_seed_sources_have_known_types_and_categories() -> None:

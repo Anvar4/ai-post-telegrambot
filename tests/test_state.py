@@ -1,9 +1,8 @@
 import itertools
 
 import pytest
-from sqlalchemy import select
 
-from app.db.models import AuditLog, Post
+from app.db.models import Post
 from app.pipeline.state import InvalidTransitionError, PostKind, PostStatus, can_transition, transition
 
 S = PostStatus
@@ -54,27 +53,22 @@ def test_failed_can_be_retried() -> None:
     assert not can_transition(S.FAILED, S.FAILED)
 
 
-async def test_transition_writes_audit(sessionmaker) -> None:
-    async with sessionmaker() as session:
-        post = Post(kind=PostKind.NEWS, status=S.CHECKED, text_html="x")
-        session.add(post)
-        await session.flush()
-        await transition(session, post, S.PENDING_APPROVAL, actor="ai", reason="semi_auto")
-        await session.commit()
-        assert post.status == S.PENDING_APPROVAL
-        rows = (await session.execute(select(AuditLog))).scalars().all()
+async def test_transition_writes_audit(repo) -> None:
+    post = await repo.posts.insert(Post(kind=PostKind.NEWS, status=S.CHECKED, text_html="x"))
+    await transition(repo, post, S.PENDING_APPROVAL, actor="ai", reason="semi_auto")
+    await repo.posts.save(post)
+    assert (await repo.posts.get(post.id)).status == S.PENDING_APPROVAL
+    rows = await repo.audit_log.find({})
     assert len(rows) == 1
     assert rows[0].action == "post.status"
     assert rows[0].details["from"] == "CHECKED"
     assert rows[0].details["to"] == "PENDING_APPROVAL"
     assert rows[0].details["reason"] == "semi_auto"
+    assert rows[0].details["post_id"] == post.id
 
 
-async def test_invalid_transition_raises(sessionmaker) -> None:
-    async with sessionmaker() as session:
-        post = Post(kind=PostKind.NEWS, status=S.PUBLISHED, text_html="x")
-        session.add(post)
-        await session.flush()
-        with pytest.raises(InvalidTransitionError):
-            await transition(session, post, S.SCHEDULED, actor="ai")
-        assert post.status == S.PUBLISHED
+async def test_invalid_transition_raises(repo) -> None:
+    post = await repo.posts.insert(Post(kind=PostKind.NEWS, status=S.PUBLISHED, text_html="x"))
+    with pytest.raises(InvalidTransitionError):
+        await transition(repo, post, S.SCHEDULED, actor="ai")
+    assert post.status == S.PUBLISHED

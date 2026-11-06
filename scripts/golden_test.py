@@ -15,7 +15,6 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import httpx
-from sqlalchemy import select
 
 from app.ai.providers.factory import build_clients
 from app.ai.router import AIRouter
@@ -23,9 +22,8 @@ from app.collectors.seed import seed_sources
 from app.collectors.service import CollectorService
 from app.config import get_settings
 from app.context import AppContext
-from app.db.models import Story
+from app.db.mongo import connect, ensure_indexes
 from app.db.repo import Repo
-from app.db.session import create_engine, make_sessionmaker, run_migrations
 from app.main import USER_AGENT
 from app.pipeline.orchestrator import Pipeline
 from app.pipeline.state import PostKind
@@ -52,12 +50,12 @@ async def main(n: int) -> int:
     settings = get_settings()
     out_dir = settings.data_path / "golden"
     out_dir.mkdir(parents=True, exist_ok=True)
-    db = out_dir / "golden.db"
-    db.unlink(missing_ok=True)
-    url = f"sqlite+aiosqlite:///{db.as_posix()}"
-    await asyncio.to_thread(run_migrations, url)
-    engine = create_engine(url)
-    repo = Repo(make_sessionmaker(engine), tz=settings.tz)
+    # Alohida vaqtinchalik baza: asosiy bot bazasiga tegmaydi, oxirida o'chiriladi
+    uri = settings.mongodb_uri.get_secret_value() if settings.mongodb_uri else ""
+    client, db = connect(uri, f"{settings.mongodb_db}_golden")
+    await client.drop_database(db.name)
+    await ensure_indexes(db)
+    repo = Repo(db, tz=settings.tz)
     async with httpx.AsyncClient(
         timeout=30, follow_redirects=True, headers={"User-Agent": USER_AGENT}
     ) as http:
@@ -80,17 +78,11 @@ async def main(n: int) -> int:
         print(f"Yig'ildi: {stats.new_articles} maqola, {stats.new_stories} story")
         pipeline = Pipeline(ctx)
         await pipeline.selector.score_new(limit=30)
-        async with repo.session() as s:
-            stories = list(
-                (
-                    await s.execute(
-                        select(Story)
-                        .where(Story.status == "scored", Story.category.in_(("kiber", "yangilik", "ai")))
-                        .order_by(Story.score.desc())
-                        .limit(n)
-                    )
-                ).scalars()
-            )
+        stories = await repo.stories.find(
+            {"status": "scored", "category": {"$in": ["kiber", "yangilik", "ai"]}},
+            sort=[("score", -1)],
+            limit=n,
+        )
         results = []
         for st in stories:
             kind = PostKind.ALERT if st.category == "kiber" else PostKind.NEWS
@@ -125,7 +117,8 @@ async def main(n: int) -> int:
             json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         spent = await repo.spent_today()
-    await engine.dispose()
+    await client.drop_database(db.name)
+    await client.close()
     passed = sum(1 for r in results if r["verdict"] == "pass" and not r["fabricated"])
     print(
         f"\nNatija: {passed}/{len(results)} post fakt-tekshiruvdan o'tdi, to'qima fakt yo'q. "

@@ -8,14 +8,12 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from sqlalchemy import select
 
 from app.ai.prompts import load_prompt
 from app.ai.schemas import QuizDraft, QuizVerify
 from app.ai.types import Message
 from app.content.formatting import normalize_uz
 from app.content.limits import validate_quiz
-from app.db.models import Poll
 from app.interactive.polls import create_poll_post
 from app.pipeline.state import PostKind
 from app.utils.timeutil import utcnow
@@ -45,18 +43,10 @@ class QuizService:
         self.rng = rng or random.Random()
 
     async def _pick_topic(self) -> str:
-        async with self.ctx.repo.session() as s:
-            recent = {
-                t
-                for t in (
-                    await s.execute(
-                        select(Poll.topic).where(
-                            Poll.purpose == "quiz", Poll.created_at >= self.clock() - timedelta(days=10)
-                        )
-                    )
-                ).scalars()
-                if t
-            }
+        polls = await self.ctx.repo.polls.find(
+            {"purpose": "quiz", "created_at": {"$gte": self.clock() - timedelta(days=10)}}
+        )
+        recent = {p.topic for p in polls if p.topic}
         return self.rng.choice([t for t in QUIZ_TOPICS if t not in recent] or QUIZ_TOPICS)
 
     async def create(

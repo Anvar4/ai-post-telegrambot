@@ -5,10 +5,10 @@ Asosiy hujjat: `SPEC.md` (talablar), reja: `docs/superpowers/plans/2026-11-06-it
 ## Buyruqlar
 
 - O'rnatish: `python -m pip install -e ".[all,dev]"` (lokal `.venv`, Windows: `.venv\Scripts\python.exe`)
-- Ishga tushirish: `python -m app` (avval `.env` to'ldiriladi; migratsiyalar avtomatik)
+- Ishga tushirish: `python -m app` (avval `.env` to'ldiriladi; MongoDB indekslari avtomatik yaratiladi)
 - Testlar: `python -m pytest` · Lint: `python -m ruff check app tests` · Tiplar: `python -m mypy`
 - Hammasi: `make check` (ruff + mypy + pytest) — commitdan oldin toza o'tishi shart
-- Migratsiya: `python -m alembic revision --autogenerate -m "<nom>"` → `python -m alembic upgrade head`
+- MongoDB tekshiruvi: `python scripts/check_mongo.py [--collect]` (vaqtinchalik `_check` bazasida, keyin o'chiradi)
 - Manbalarni tekshirish: `python scripts/check_sources.py`
 
 ## Papkalar
@@ -22,7 +22,8 @@ Asosiy hujjat: `SPEC.md` (talablar), reja: `docs/superpowers/plans/2026-11-06-it
 - `app/analytics/` — metrikalar, invite-linklar, hisobotlar, o'sish tahlili.
 - `app/bot/` — aiogram handlerlari, klaviaturalar, middleware, `sender.py` (Telegram'ga yagona chiqish yo'li), `notify.py`.
 - `app/scheduler/` — APScheduler vazifalari (modul darajasidagi funksiyalar, `app.context.get_ctx()` orqali).
-- `tests/` — pytest; `conftest.py` da `FakeLLM`, `FakeSender`, `FakeImage`, in-memory DB.
+- `app/db/` — MongoDB: `models.py` (dataclass hujjatlar, `id` = `_id`), `repo.py` (`Repo`, `Collection`), `mongo.py` (ulanish, indekslar).
+- `tests/` — pytest; `conftest.py` da `FakeLLM`, `FakeSender`, `FakeImage`; baza — `tests/mongo_fake.py` (mongomock).
 
 ## Qoidalar
 
@@ -32,7 +33,8 @@ Asosiy hujjat: `SPEC.md` (talablar), reja: `docs/superpowers/plans/2026-11-06-it
 - Tashqi matn (maqola, izoh, foydalanuvchi) promptga faqat `wrap_external("source"|"user", ...)` orqali.
 - Sirlar kodga, logga, commitga yozilmaydi. Loguru filtri tokenlarni maskalaydi.
 - Obunachi ID — `hash_user_id()` bilan; adminlar ID si ochiq.
-- Post holati faqat `pipeline.state.transition()` orqali o'zgaradi (audit_log yoziladi).
+- Post holati faqat `pipeline.state.transition(repo, post, ...)` orqali o'zgaradi (audit yoziladi), keyin `repo.posts.save(post)`.
+- Nashr `repo.posts.cas()` bilan atomik — bir post ikki marta chiqmaydi. Ko'p yozuv — `insert_many` (Atlas kechikishi).
 - Matn o'zbekcha lotin; oʻ/gʻ — `ʻ` (U+02BB), `content.formatting.normalize_uz()`.
 
 ## Uslub

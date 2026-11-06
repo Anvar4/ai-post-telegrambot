@@ -3,7 +3,6 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import respx
-from sqlalchemy import func, select
 
 from app.collectors import cisa_kev, github, hackernews, nvd, rss
 from app.collectors.base import FetchContext
@@ -76,48 +75,31 @@ def test_title_similarity_threshold_cases() -> None:
     assert title_similarity("Google patches Chrome zero-day", "Apple releases iOS 27 beta") < 50
 
 
-async def test_similar_titles_merge_into_story(sessionmaker) -> None:
-    async with sessionmaker() as s:
-        a1 = Article(
-            url="https://a.com/1",
-            url_hash="h1",
-            title="Microsoft fixes Windows zero-day exploited in attacks",
-        )
-        a2 = Article(
-            url="https://b.com/2",
-            url_hash="h2",
-            title="Microsoft fixes Windows zero-day exploited in the attacks",
-        )
-        s.add_all([a1, a2])
-        await s.flush()
-        st1 = await attach_to_story(s, a1, category="kiber", now=NOW)
-        st2 = await attach_to_story(s, a2, category="kiber", now=NOW + timedelta(hours=1))
-        await s.commit()
-        assert st1.id == st2.id
-        assert st2.article_count == 2
-        assert a2.story_id == st1.id
+async def test_similar_titles_merge_into_story(repo) -> None:
+    a1 = Article(
+        url="https://a.com/1", url_hash="h1", title="Microsoft fixes Windows zero-day exploited in attacks"
+    )
+    a2 = Article(
+        url="https://b.com/2",
+        url_hash="h2",
+        title="Microsoft fixes Windows zero-day exploited in the attacks",
+    )
+    st1 = await attach_to_story(repo, a1, category="kiber", now=NOW)
+    st2 = await attach_to_story(repo, a2, category="kiber", now=NOW + timedelta(hours=1))
+    assert st1.id == st2.id
+    assert a2.story_id == st1.id
+    assert (await repo.stories.get(st1.id)).article_count == 2
 
 
-async def test_old_story_outside_48h_not_merged(sessionmaker) -> None:
-    async with sessionmaker() as s:
-        s.add(
-            Story(
-                title="Microsoft fixes Windows zero-day exploited in attacks",
-                first_seen=NOW - timedelta(hours=50),
-                last_seen=NOW - timedelta(hours=50),
-            )
-        )
-        art = Article(
-            url="https://a.com/1",
-            url_hash="h1",
-            title="Microsoft fixes Windows zero-day exploited in attacks",
-        )
-        s.add(art)
-        await s.flush()
-        story = await attach_to_story(s, art, category="kiber", now=NOW)
-        await s.commit()
-        count = await s.scalar(select(func.count()).select_from(Story))
-    assert count == 2
+async def test_old_story_outside_48h_not_merged(repo) -> None:
+    title = "Microsoft fixes Windows zero-day exploited in attacks"
+    await repo.stories.insert(
+        Story(title=title, first_seen=NOW - timedelta(hours=50), last_seen=NOW - timedelta(hours=50))
+    )
+    story = await attach_to_story(
+        repo, Article(url="https://a.com/1", url_hash="h1", title=title), category="kiber", now=NOW
+    )
+    assert await repo.stories.count() == 2
     assert story.article_count == 1
 
 
@@ -297,9 +279,7 @@ async def test_extract_text_from_html() -> None:
 
 @respx.mock
 async def test_collector_service_inserts_and_skips_existing(repo) -> None:
-    async with repo.session() as s:
-        s.add(src(id=None))
-        await s.commit()
+    await repo.sources.insert(src(id=None))
     respx.get("https://news.example.com/feed").mock(return_value=httpx.Response(200, content=RSS.encode()))
     async with httpx.AsyncClient() as http:
         svc = CollectorService(repo, http, notifier=None, clock=lambda: NOW)
@@ -307,9 +287,8 @@ async def test_collector_service_inserts_and_skips_existing(repo) -> None:
         second = await svc.run_once()
     assert first.new_articles == 1 and first.new_stories == 1
     assert second.new_articles == 0
-    async with repo.session() as s:
-        story = (await s.execute(select(Story))).scalar_one()
-        source = (await s.execute(select(Source))).scalar_one()
+    (story,) = await repo.stories.find({})
+    (source,) = await repo.sources.find({})
     assert story.source_category == "kiber"
     assert source.last_ok_at is not None and source.fail_count == 0
 
@@ -318,17 +297,14 @@ async def test_collector_service_inserts_and_skips_existing(repo) -> None:
 async def test_source_disabled_after_three_failures(repo) -> None:
     from tests.fakes import FakeNotifier
 
-    async with repo.session() as s:
-        s.add(src(id=None))
-        await s.commit()
+    await repo.sources.insert(src(id=None))
     respx.get("https://news.example.com/feed").mock(return_value=httpx.Response(500))
     notifier = FakeNotifier()
     async with httpx.AsyncClient() as http:
         svc = CollectorService(repo, http, notifier=notifier, clock=lambda: NOW)
         for _ in range(3):
             stats = await svc.run_once()
-    async with repo.session() as s:
-        source = (await s.execute(select(Source))).scalar_one()
+    (source,) = await repo.sources.find({})
     assert stats.failed_sources == 1
     assert source.enabled is False
     assert source.fail_count == 3
@@ -340,10 +316,12 @@ async def test_source_disabled_after_three_failures(repo) -> None:
 async def test_auto_disabled_source_is_retried_after_6h(repo) -> None:
     from tests.fakes import FakeNotifier
 
-    async with repo.session() as s:
-        s.add(src(id=None, enabled=False, fail_count=3, auto_disabled_at=NOW - timedelta(hours=7)))
-        s.add(src(id=None, name="Admin off", url="https://off.example.com/feed", enabled=False))
-        await s.commit()
+    await repo.sources.insert(
+        src(id=None, enabled=False, fail_count=3, auto_disabled_at=NOW - timedelta(hours=7))
+    )
+    await repo.sources.insert(
+        src(id=None, name="Admin off", url="https://off.example.com/feed", enabled=False)
+    )
     respx.get("https://news.example.com/feed").mock(return_value=httpx.Response(200, content=RSS.encode()))
     off = respx.get("https://off.example.com/feed").mock(
         return_value=httpx.Response(200, content=RSS.encode())
@@ -351,9 +329,24 @@ async def test_auto_disabled_source_is_retried_after_6h(repo) -> None:
     notifier = FakeNotifier()
     async with httpx.AsyncClient() as http:
         await CollectorService(repo, http, notifier=notifier, clock=lambda: NOW).run_once()
-    async with repo.session() as s:
-        sources = {x.name: x for x in (await s.execute(select(Source))).scalars()}
+    sources = {x.name: x for x in await repo.sources.find({})}
     assert sources["Test"].enabled is True
     assert sources["Test"].auto_disabled_at is None
     assert sources["Admin off"].enabled is False
     assert not off.called
+
+
+async def test_story_batch_defers_writes_until_flush(repo) -> None:
+    from app.collectors.dedupe import StoryBatch
+
+    batch = StoryBatch(ids=iter(await repo.next_ids("stories", 2)))
+    candidates: list = []
+    a1 = Article(url="https://a.com/1", url_hash="h1", title="Chrome zero-day exploited in attacks now")
+    a2 = Article(url="https://b.com/2", url_hash="h2", title="Chrome zero-day exploited in attacks now!")
+    s1 = await attach_to_story(repo, a1, category="kiber", now=NOW, candidates=candidates, batch=batch)
+    s2 = await attach_to_story(repo, a2, category="kiber", now=NOW, candidates=candidates, batch=batch)
+    assert s1 is s2 and s1.article_count == 2
+    assert await repo.stories.count() == 0  # hali yozilmagan
+    await batch.flush(repo)
+    (saved,) = await repo.stories.find({})
+    assert saved.article_count == 2 and a1.story_id == a2.story_id == saved.id

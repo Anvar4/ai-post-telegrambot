@@ -1,7 +1,5 @@
 import json
 
-from sqlalchemy import select
-
 from app.bot.keyboards import ModCB
 from app.bot.setup import build_dispatcher
 from app.db.models import ModerationEvent
@@ -68,8 +66,7 @@ async def test_events_logged_with_hash(ctx) -> None:
     await ModerationService(ctx).handle(
         GROUP, 40, SPAMMER, "Karta raqamingizni yuboring, yutuq!", is_new_member_first_msg=False
     )
-    async with ctx.repo.session() as s:
-        ev = (await s.execute(select(ModerationEvent))).scalar_one()
+    ev = (await ctx.repo.all(ModerationEvent))[0]
     assert ev.label == "scam" and ev.action == "delete"
     assert str(SPAMMER) not in ev.user_hash
 

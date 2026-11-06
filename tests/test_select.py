@@ -1,8 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
-
 from app.db.models import Article, Post, Source, Story
 from app.pipeline.select import Selector
 from app.pipeline.state import PostKind, PostStatus
@@ -24,15 +22,15 @@ async def add_story(
     source_category="kiber",
     article_count=1,
 ) -> int:
-    async with ctx.repo.session() as s:
-        src = (await s.execute(select(Source).limit(1))).scalar_one_or_none()
-        if src is None:
-            src = Source(
+    src = await ctx.repo.sources.find_one({})
+    if src is None:
+        src = await ctx.repo.sources.insert(
+            Source(
                 name="BleepingComputer", type="rss", url="https://bc.example/feed", category="kiber", trust=4
             )
-            s.add(src)
-            await s.flush()
-        st = Story(
+        )
+    st = await ctx.repo.stories.insert(
+        Story(
             title=title,
             status=status,
             score=score,
@@ -43,45 +41,41 @@ async def add_story(
             is_breaking=breaking,
             article_count=article_count,
         )
-        s.add(st)
-        await s.flush()
-        s.add(
-            Article(
-                source_id=src.id,
-                url=f"https://bc.example/{st.id}",
-                url_hash=f"h{st.id}",
-                title=title,
-                summary="Summary text",
-                story_id=st.id,
-            )
+    )
+    await ctx.repo.articles.insert(
+        Article(
+            source_id=src.id,
+            url=f"https://bc.example/{st.id}",
+            url_hash=f"h{st.id}",
+            title=title,
+            summary="Summary text",
+            story_id=st.id,
         )
-        await s.commit()
-        return st.id
+    )
+    return st.id
 
 
 async def add_post(ctx, *, title, category, days_ago=0.0, status=PostStatus.PUBLISHED) -> None:
-    async with ctx.repo.session() as s:
-        st = Story(
+    st = await ctx.repo.stories.insert(
+        Story(
             title=title,
             status="used",
             category=category,
             first_seen=NOW - timedelta(days=days_ago),
             last_seen=NOW,
         )
-        s.add(st)
-        await s.flush()
-        s.add(
-            Post(
-                kind=PostKind.NEWS,
-                status=status,
-                story_id=st.id,
-                text_html="x",
-                title_short=title,
-                extra={"category": category},
-                created_at=NOW - timedelta(days=days_ago),
-            )
+    )
+    await ctx.repo.posts.insert(
+        Post(
+            kind=PostKind.NEWS,
+            status=status,
+            story_id=st.id,
+            text_html="x",
+            title_short=title,
+            extra={"category": category},
+            created_at=NOW - timedelta(days=days_ago),
         )
-        await s.commit()
+    )
 
 
 def filter_json(items) -> str:
@@ -123,8 +117,7 @@ async def test_irrelevant_filtered_by_fast_model(ctx) -> None:
     use_llm(ctx, fast=fast, editor=editor)
     scored = await Selector(ctx, clock=lambda: NOW).score_new()
     assert scored == 1
-    async with ctx.repo.session() as s:
-        a, b = await s.get(Story, s1), await s.get(Story, s2)
+    a, b = await ctx.repo.stories.get(s1), await ctx.repo.stories.get(s2)
     assert (a.status, a.score, a.category, a.why_uz) == ("scored", 80, "kiber", "muhim")
     assert b.status == "irrelevant"
     # muharrir faqat relevant story'ni ko'radi

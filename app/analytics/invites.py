@@ -6,8 +6,6 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
-
 from app.db.models import InviteLink, MemberEvent
 from app.utils.security import hash_user_id
 from app.utils.timeutil import utcnow
@@ -33,9 +31,7 @@ class InviteService:
         if chat is None:
             raise ValueError("CHANNEL_ID sozlanmagan")
         url = await self.ctx.sender.create_invite_link(chat, name)
-        async with self.ctx.repo.session() as s:
-            s.add(InviteLink(name=name[:100], url=url, created_at=self.clock()))
-            await s.commit()
+        await self.ctx.repo.invite_links.insert(InviteLink(name=name[:100], url=url, created_at=self.clock()))
         await self.ctx.repo.audit("admin", "invite.create", name=name)
         return url
 
@@ -46,48 +42,31 @@ class InviteService:
             return
         user_hash = hash_user_id(user_id, self.ctx.salt)
         now = self.clock()
-        async with self.ctx.repo.session() as s:
-            if old_status in LEFT and new_status in JOINED:
-                link = None
-                if invite_url:
-                    link = (
-                        await s.execute(select(InviteLink).where(InviteLink.url == invite_url))
-                    ).scalar_one_or_none()
-                if link is not None:
-                    link.joins += 1
-                s.add(
-                    MemberEvent(
-                        ts=now, user_hash=user_hash, event="join", invite_link_id=link.id if link else None
-                    )
+        repo = self.ctx.repo
+        if old_status in LEFT and new_status in JOINED:
+            link = await repo.invite_links.find_one({"url": invite_url}) if invite_url else None
+            if link is not None:
+                await repo.invite_links.update_where({"_id": link.id}, {"$inc": {"joins": 1}})
+            await repo.member_events.insert(
+                MemberEvent(
+                    ts=now, user_hash=user_hash, event="join", invite_link_id=link.id if link else None
                 )
-            elif old_status in JOINED and new_status in LEFT:
-                last_join = (
-                    await s.execute(
-                        select(MemberEvent)
-                        .where(MemberEvent.user_hash == user_hash, MemberEvent.event == "join")
-                        .order_by(MemberEvent.id.desc())
-                        .limit(1)
-                    )
-                ).scalar_one_or_none()
-                link_id = last_join.invite_link_id if last_join else None
-                if link_id is not None:
-                    link = await s.get(InviteLink, link_id)
-                    if link is not None:
-                        link.leaves += 1
-                s.add(MemberEvent(ts=now, user_hash=user_hash, event="leave", invite_link_id=link_id))
-            else:
-                return
-            await s.commit()
+            )
+        elif old_status in JOINED and new_status in LEFT:
+            last_join = await repo.member_events.find_one(
+                {"user_hash": user_hash, "event": "join"}, sort=[("_id", -1)]
+            )
+            link_id = last_join.invite_link_id if last_join else None
+            if link_id is not None:
+                await repo.invite_links.update_where({"_id": link_id}, {"$inc": {"leaves": 1}})
+            await repo.member_events.insert(
+                MemberEvent(ts=now, user_hash=user_hash, event="leave", invite_link_id=link_id)
+            )
 
     async def stats(self) -> list[dict[str, Any]]:
         now = self.clock()
-        async with self.ctx.repo.session() as s:
-            links = (await s.execute(select(InviteLink).order_by(InviteLink.id))).scalars().all()
-            events = (
-                (await s.execute(select(MemberEvent).where(MemberEvent.invite_link_id.is_not(None))))
-                .scalars()
-                .all()
-            )
+        links = await self.ctx.repo.invite_links.find({}, sort=[("_id", 1)])
+        events = await self.ctx.repo.member_events.find({"invite_link_id": {"$ne": None}})
         leaves: dict[str, list[datetime]] = {}
         for e in events:
             if e.event == "leave":

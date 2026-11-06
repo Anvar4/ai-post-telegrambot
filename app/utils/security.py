@@ -14,6 +14,7 @@ _PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"AIza[0-9A-Za-z_-]{20,}"),  # Google
     re.compile(r"r8_[A-Za-z0-9]{20,}"),  # Replicate
     re.compile(r"(?i)(authorization:\s*(?:bearer|key)\s+)[^\s'\"]+"),
+    re.compile(r"(mongodb(?:\+srv)?://[^:/@\s]+:)[^@\s]+(?=@)"),  # MongoDB URI paroli
 ]
 
 _registered: set[str] = set()

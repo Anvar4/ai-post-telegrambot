@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from sqlalchemy import select
 
 from app.ai.prompts import load_prompt
 from app.ai.schemas import PollDraft
@@ -69,8 +68,8 @@ async def create_poll_post(
     if quiz:
         poll_data["correct_option_id"] = correct_option_id
         poll_data["explanation"] = explanation or ""
-    async with ctx.repo.session() as s:
-        post = Post(
+    post = await ctx.repo.posts.insert(
+        Post(
             kind=kind,
             status=S.NEW,
             text_html=escape(question),
@@ -88,23 +87,22 @@ async def create_poll_post(
                 "code_issues": [],
             },
         )
-        s.add(post)
-        await s.flush()
-        for status in (S.SELECTED, S.DRAFTED, S.CHECKED):
-            await transition(s, post, status, created_by)
-        s.add(
-            Poll(
-                post_id=post.id,
-                question=question,
-                options=options,
-                purpose=purpose,
-                topic=topic,
-                correct_option_ids=[correct_option_id] if quiz and correct_option_id is not None else [],
-                explanation=explanation,
-            )
+    )
+    for status in (S.SELECTED, S.DRAFTED, S.CHECKED):
+        await transition(ctx.repo, post, status, created_by)
+    await ctx.repo.posts.save(post)
+    await ctx.repo.polls.insert(
+        Poll(
+            post_id=post.id,
+            question=question,
+            options=options,
+            purpose=purpose,
+            topic=topic,
+            correct_option_ids=[correct_option_id] if quiz and correct_option_id is not None else [],
+            explanation=explanation,
         )
-        await s.commit()
-        pid = post.id
+    )
+    pid: int = post.id  # type: ignore[assignment]
     await ctx.service("pipeline").after_check(pid)
     return pid
 
@@ -118,21 +116,14 @@ class PollService:
         self.rng = rng or random.Random()
 
     async def _recent_topics(self, days: int = 30) -> set[str]:
-        async with self.ctx.repo.session() as s:
-            rows = await s.execute(
-                select(Poll.topic).where(Poll.created_at >= self.clock() - timedelta(days=days))
-            )
-            return {t for t in rows.scalars() if t}
+        rows = await self.ctx.repo.polls.find({"created_at": {"$gte": self.clock() - timedelta(days=days)}})
+        return {p.topic for p in rows if p.topic}
 
     async def _next_purpose(self) -> str:
-        async with self.ctx.repo.session() as s:
-            last = await s.scalar(
-                select(Poll.purpose)
-                .where(Poll.purpose.in_(("fun", "research")))
-                .order_by(Poll.id.desc())
-                .limit(1)
-            )
-        return "research" if last == "fun" else "fun"
+        last = await self.ctx.repo.polls.find_one(
+            {"purpose": {"$in": ["fun", "research"]}}, sort=[("_id", -1)]
+        )
+        return "research" if last is not None and last.purpose == "fun" else "fun"
 
     async def create(
         self,
@@ -193,72 +184,53 @@ class PollService:
     async def on_poll_update(
         self, poll_id: str, options: Sequence[tuple[str, int]], total: int, is_closed: bool
     ) -> None:
-        async with self.ctx.repo.session() as s:
-            poll = (
-                await s.execute(select(Poll).where(Poll.telegram_poll_id == poll_id))
-            ).scalar_one_or_none()
-            if poll is None:
-                return
-            poll.results = {text: int(count) for text, count in options}
-            poll.total_voters = int(total)
-            if is_closed:
-                poll.closed = True
-            await s.commit()
+        poll = await self.ctx.repo.polls.find_one({"telegram_poll_id": poll_id})
+        if poll is None:
+            return
+        poll.results = {text: int(count) for text, count in options}
+        poll.total_voters = int(total)
+        if is_closed:
+            poll.closed = True
+        await self.ctx.repo.polls.save(poll)
 
     async def close_due(self, now: datetime | None = None) -> int:
         now = now or self.clock()
-        async with self.ctx.repo.session() as s:
-            rows = (
-                await s.execute(
-                    select(Poll, Post)
-                    .join(Post, Post.id == Poll.post_id)
-                    .where(
-                        Poll.closed.is_(False),
-                        Poll.closes_at <= now,
-                        Post.message_id.is_not(None),
-                        Post.chat_id.is_not(None),
-                    )
-                )
-            ).all()
+        due = await self.ctx.repo.polls.find({"closed": False, "closes_at": {"$lte": now}})
+        posts = {
+            p.id: p
+            for p in await self.ctx.repo.posts.find({"_id": {"$in": [d.post_id for d in due]}})
+            if p.message_id is not None and p.chat_id is not None
+        }
         closed = 0
-        for poll, post in rows:
+        for poll in due:
+            post = posts.get(poll.post_id)
+            if post is None:
+                continue
             result: dict[str, Any] = {}
             try:
                 result = await self.ctx.sender.stop_poll(int(post.chat_id or 0), int(post.message_id or 0))
             except Exception as exc:
                 logger.warning("So'rovnoma #{} yopilmadi: {}", poll.id, exc)
-            async with self.ctx.repo.session() as s:
-                row = await s.get(Poll, poll.id)
-                if row is None:
-                    continue
-                row.closed = True
-                if result.get("options"):
-                    row.results = {o["text"]: int(o["voter_count"]) for o in result["options"]}
-                    row.total_voters = int(result.get("total_voter_count", 0))
-                await s.commit()
-                closed += 1
-                if row.purpose == "research" and row.total_voters:
-                    await self.ctx.notifier.notify(f"📊 Tadqiqot soʻrovnomasi yakunlandi:\n{_summary(row)}")
+            poll.closed = True
+            if result.get("options"):
+                poll.results = {o["text"]: int(o["voter_count"]) for o in result["options"]}
+                poll.total_voters = int(result.get("total_voter_count", 0))
+            await self.ctx.repo.polls.save(poll)
+            closed += 1
+            if poll.purpose == "research" and poll.total_voters:
+                await self.ctx.notifier.notify(f"📊 Tadqiqot soʻrovnomasi yakunlandi:\n{_summary(poll)}")
         return closed
 
     async def research_context(self, days: int = 90) -> str:
-        async with self.ctx.repo.session() as s:
-            rows = (
-                (
-                    await s.execute(
-                        select(Poll)
-                        .where(
-                            Poll.purpose == "research",
-                            Poll.total_voters > 0,
-                            Poll.created_at >= self.clock() - timedelta(days=days),
-                        )
-                        .order_by(Poll.id.desc())
-                        .limit(10)
-                    )
-                )
-                .scalars()
-                .all()
-            )
+        rows = await self.ctx.repo.polls.find(
+            {
+                "purpose": "research",
+                "total_voters": {"$gt": 0},
+                "created_at": {"$gte": self.clock() - timedelta(days=days)},
+            },
+            sort=[("_id", -1)],
+            limit=10,
+        )
         return "\n".join(_summary(p) for p in rows)
 
 

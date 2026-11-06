@@ -19,8 +19,6 @@ COPY pyproject.toml README.md ./
 COPY app ./app
 RUN if [ -n "$EXTRAS" ]; then pip install ".[${EXTRAS}]"; else pip install .; fi
 
-COPY alembic ./alembic
-COPY alembic.ini ./
 COPY assets ./assets
 COPY scripts ./scripts
 

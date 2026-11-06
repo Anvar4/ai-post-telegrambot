@@ -28,16 +28,16 @@ async def load_sources(from_db: bool) -> list[Source]:
             Source(id=i, enabled=s.get("enabled", True), **{k: v for k, v in s.items() if k != "enabled"})
             for i, s in enumerate(SEED_SOURCES, 1)
         ]
-    from sqlalchemy import select
-
     from app.config import get_settings
-    from app.db.session import create_engine, make_sessionmaker
+    from app.db.mongo import connect
+    from app.db.repo import Repo
 
-    engine = create_engine(get_settings().database_url)
-    async with make_sessionmaker(engine)() as s:
-        rows = list((await s.execute(select(Source).order_by(Source.id))).scalars())
-    await engine.dispose()
-    return rows
+    s = get_settings()
+    client, db = connect(s.mongodb_uri.get_secret_value() if s.mongodb_uri else "", s.mongodb_db)
+    try:
+        return await Repo(db).sources.find({}, sort=[("_id", 1)])
+    finally:
+        await client.close()
 
 
 async def main() -> int:

@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from sqlalchemy import select
 
 from app.ai.prompts import load_prompt
 from app.ai.schemas import EditorOutput, FilterOutput
@@ -17,7 +16,7 @@ from app.ai.types import Message
 from app.collectors.dedupe import title_similarity
 from app.content.formatting import wrap_external
 from app.content.schedule import KIND_CATEGORIES
-from app.db.models import Article, Post, Source, Story
+from app.db.models import Story
 from app.pipeline.state import PostKind, PostStatus
 from app.utils.timeutil import day_bounds, utcnow
 
@@ -26,7 +25,7 @@ if TYPE_CHECKING:
 
 FILTER_BATCH = 40
 TOPIC_SIMILARITY = 75
-DEAD_STATUSES = (PostStatus.REJECTED, PostStatus.EXPIRED, PostStatus.FAILED)
+DEAD_STATUSES = [PostStatus.REJECTED.value, PostStatus.EXPIRED.value, PostStatus.FAILED.value]
 
 
 class Selector:
@@ -34,23 +33,22 @@ class Selector:
         self.ctx = ctx
         self.clock = clock
 
+    @property
+    def repo(self) -> Any:
+        return self.ctx.repo
+
     # --- baholash (har story bir marta) ---
 
     async def score_new(self, limit: int = 30, source_categories: tuple[str, ...] | None = None) -> int:
         now = self.clock()
         since = now - timedelta(hours=24)
         await self._filter_new(since, source_categories)
-        async with self.ctx.repo.session() as s:
-            q = select(Story).where(Story.status == "filtered", Story.first_seen >= since)
-            if source_categories:
-                q = q.where(Story.source_category.in_(source_categories))
-            stories = list(
-                (
-                    await s.execute(
-                        q.order_by(Story.article_count.desc(), Story.first_seen.desc()).limit(limit)
-                    )
-                ).scalars()
-            )
+        q: dict[str, Any] = {"status": "filtered", "first_seen": {"$gte": since}}
+        if source_categories:
+            q["source_category"] = {"$in": list(source_categories)}
+        stories = await self.repo.stories.find(
+            q, sort=[("article_count", -1), ("first_seen", -1)], limit=limit
+        )
         if not stories:
             return 0
         info = await self._story_info([st.id for st in stories])
@@ -84,32 +82,27 @@ class Selector:
             max_tokens=4000,
         )
         items = {it.id: it for it in res.parsed.items}
-        async with self.ctx.repo.session() as s:
-            for st in stories:
-                story = await s.get(Story, st.id)
-                if story is None:
-                    continue
-                it = items.get(st.id)
-                story.status = "scored"
-                story.scored_at = now
-                if it is None:
-                    story.score = 0
-                    continue
+        for story in stories:
+            it = items.get(story.id)
+            story.status = "scored"
+            story.scored_at = now
+            if it is None:
+                story.score = 0
+            else:
                 story.score = it.score
                 story.category = it.category or story.category
                 story.is_breaking = it.is_breaking
                 story.why_uz = it.why_uz
                 story.risk_flags = list(it.risk_flags)
-            await s.commit()
+            await self.repo.stories.save(story)
         logger.info("Saralovchi: {} ta story baholandi", len(stories))
         return len(stories)
 
     async def _filter_new(self, since: datetime, source_categories: tuple[str, ...] | None) -> None:
-        async with self.ctx.repo.session() as s:
-            q = select(Story).where(Story.status == "new", Story.first_seen >= since)
-            if source_categories:
-                q = q.where(Story.source_category.in_(source_categories))
-            stories = list((await s.execute(q.order_by(Story.first_seen.desc()).limit(200))).scalars())
+        q: dict[str, Any] = {"status": "new", "first_seen": {"$gte": since}}
+        if source_categories:
+            q["source_category"] = {"$in": list(source_categories)}
+        stories = await self.repo.stories.find(q, sort=[("first_seen", -1)], limit=200)
         if not stories:
             return
         info = await self._story_info([st.id for st in stories])
@@ -130,42 +123,33 @@ class Selector:
                 max_tokens=2000,
             )
             verdicts = {it.id: it for it in res.parsed.items}
-            async with self.ctx.repo.session() as s:
-                for st in batch:
-                    story = await s.get(Story, st.id)
-                    if story is None:
-                        continue
-                    v = verdicts.get(st.id)
-                    if v is not None and not v.relevant:
-                        story.status = "irrelevant"
-                        continue
+            for story in batch:
+                v = verdicts.get(story.id)
+                if v is not None and not v.relevant:
+                    story.status = "irrelevant"
+                else:
                     story.status = "filtered"
                     if v is not None and v.category != "boshqa":
                         story.category = v.category
                     if v is not None and v.duplicate_suspect:
                         story.risk_flags = [*story.risk_flags, "duplicate_suspect"]
-                await s.commit()
+                await self.repo.stories.save(story)
 
-    async def _story_info(self, story_ids: list[int]) -> dict[int, dict[str, Any]]:
+    async def _story_info(self, story_ids: list[Any]) -> dict[int, dict[str, Any]]:
         if not story_ids:
             return {}
-        async with self.ctx.repo.session() as s:
-            rows = (
-                await s.execute(
-                    select(Article.story_id, Article.summary, Article.extra, Source.name)
-                    .join(Source, Source.id == Article.source_id, isouter=True)
-                    .where(Article.story_id.in_(story_ids))
-                    .order_by(Article.id)
-                )
-            ).all()
+        articles = await self.repo.articles.find({"story_id": {"$in": story_ids}}, sort=[("_id", 1)])
+        source_ids = list({a.source_id for a in articles if a.source_id is not None})
+        names = {s.id: s.name for s in await self.repo.sources.find({"_id": {"$in": source_ids}})}
         info: dict[int, dict[str, Any]] = {}
-        for story_id, summary, extra, source_name in rows:
-            entry = info.setdefault(story_id, {"summary": "", "sources": [], "kev": False})
-            if not entry["summary"] and summary:
-                entry["summary"] = summary
-            if source_name and source_name not in entry["sources"]:
-                entry["sources"].append(source_name)
-            if (extra or {}).get("kev"):
+        for art in articles:
+            entry = info.setdefault(art.story_id, {"summary": "", "sources": [], "kev": False})  # type: ignore[arg-type]
+            if not entry["summary"] and art.summary:
+                entry["summary"] = art.summary
+            name = names.get(art.source_id)
+            if name and name not in entry["sources"]:
+                entry["sources"].append(name)
+            if (art.extra or {}).get("kev"):
                 entry["kev"] = True
         return info
 
@@ -179,18 +163,14 @@ class Selector:
             return ""
 
     async def recent_topics(self, now: datetime, days: int = 7) -> list[str]:
-        since = now - timedelta(days=days)
-        async with self.ctx.repo.session() as s:
-            rows = (
-                await s.execute(
-                    select(Post.title_short, Story.title)
-                    .join(Story, Story.id == Post.story_id, isouter=True)
-                    .where(Post.created_at >= since, Post.status.not_in(DEAD_STATUSES))
-                )
-            ).all()
+        posts = await self.repo.posts.find(
+            {"created_at": {"$gte": now - timedelta(days=days)}, "status": {"$nin": DEAD_STATUSES}}
+        )
+        story_ids = [p.story_id for p in posts if p.story_id is not None]
+        titles = {s.id: s.title for s in await self.repo.stories.find({"_id": {"$in": story_ids}})}
         topics: list[str] = []
-        for title_short, story_title in rows:
-            for t in (story_title, title_short):
+        for p in posts:
+            for t in (titles.get(p.story_id), p.title_short):
                 if t and t not in topics:
                     topics.append(t)
         return topics
@@ -203,27 +183,26 @@ class Selector:
         cats = KIND_CATEGORIES.get(kind)
         if not cats:
             return None
+        enabled = await self._enabled_categories()
+        if enabled is not None:
+            cats = tuple(c for c in cats if c in enabled)
+            if not cats:
+                return None
         window = timedelta(hours=24) if kind in (PostKind.NEWS, PostKind.ALERT) else timedelta(days=7)
         min_score = int(await self.ctx.runtime.get("min_score"))
         cap = int(await self.ctx.runtime.get("category_daily_cap"))
         used_today = await self._categories_today(now)
         recent = await self.recent_topics(now)
-        async with self.ctx.repo.session() as s:
-            candidates = list(
-                (
-                    await s.execute(
-                        select(Story)
-                        .where(
-                            Story.status == "scored",
-                            Story.category.in_(cats),
-                            Story.score >= min_score,
-                            Story.first_seen >= now - window,
-                        )
-                        .order_by(Story.score.desc(), Story.article_count.desc(), Story.first_seen.desc())
-                        .limit(50)
-                    )
-                ).scalars()
-            )
+        candidates = await self.repo.stories.find(
+            {
+                "status": "scored",
+                "category": {"$in": list(cats)},
+                "score": {"$gte": min_score},
+                "first_seen": {"$gte": now - window},
+            },
+            sort=[("score", -1), ("article_count", -1), ("first_seen", -1)],
+            limit=50,
+        )
         for story in candidates:
             if used_today[story.category or ""] >= cap:
                 continue
@@ -234,32 +213,30 @@ class Selector:
             return story
         return None
 
+    async def _enabled_categories(self) -> set[str] | None:
+        try:
+            cats = await self.ctx.runtime.get("categories")
+        except KeyError:
+            return None
+        return set(cats) if cats is not None else None
+
     async def _categories_today(self, now: datetime) -> Counter[str]:
         start, end = day_bounds(now, self.ctx.settings.tz)
-        async with self.ctx.repo.session() as s:
-            rows = (
-                await s.execute(
-                    select(Post.extra).where(
-                        Post.created_at >= start, Post.created_at < end, Post.status.not_in(DEAD_STATUSES)
-                    )
-                )
-            ).scalars()
-            return Counter(str((extra or {}).get("category", "")) for extra in rows)
+        posts = await self.repo.posts.find(
+            {"created_at": {"$gte": start, "$lt": end}, "status": {"$nin": DEAD_STATUSES}}
+        )
+        return Counter(str((p.extra or {}).get("category", "")) for p in posts)
 
     async def breaking_candidates(self, min_score: int = 85, now: datetime | None = None) -> list[Story]:
         now = now or self.clock()
-        async with self.ctx.repo.session() as s:
-            return list(
-                (
-                    await s.execute(
-                        select(Story)
-                        .where(
-                            Story.status == "scored",
-                            Story.is_breaking.is_(True),
-                            Story.score >= min_score,
-                            Story.first_seen >= now - timedelta(hours=24),
-                        )
-                        .order_by(Story.score.desc())
-                    )
-                ).scalars()
+        return list(
+            await self.repo.stories.find(
+                {
+                    "status": "scored",
+                    "is_breaking": True,
+                    "score": {"$gte": min_score},
+                    "first_seen": {"$gte": now - timedelta(hours=24)},
+                },
+                sort=[("score", -1)],
             )
+        )

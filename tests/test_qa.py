@@ -1,7 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
 from aiogram.types import Chat, DirectMessagesTopic, Message, Update, User
-from sqlalchemy import select
 
 from app.bot.setup import build_dispatcher
 from app.db.models import QALog
@@ -45,8 +44,7 @@ async def test_card_number_triggers_warning_without_llm(ctx) -> None:
     answer = await QAService(ctx).answer(555, "Karta raqamim 8600 1234 5678 9012, pul tushmadi", "dm")
     assert "maxfiy" in answer.lower()
     assert writer.calls == []
-    async with ctx.repo.session() as s:
-        log = (await s.execute(select(QALog))).scalar_one()
+    log = (await ctx.repo.all(QALog))[0]
     assert log.flagged is True
     assert "8600" not in log.question
 
@@ -65,8 +63,7 @@ async def test_answer_truncated_to_700_and_question_wrapped(ctx) -> None:
 async def test_qa_log_saved_with_hash_not_id(ctx) -> None:
     use_llm(ctx, writer=ScriptedLLM(script=["VPN — xavfsiz tunnel."]))
     await QAService(ctx).answer(123456789, "VPN nima?", "comments")
-    async with ctx.repo.session() as s:
-        log = (await s.execute(select(QALog))).scalar_one()
+    log = (await ctx.repo.all(QALog))[0]
     assert log.channel == "comments"
     assert "123456789" not in log.user_hash and len(log.user_hash) == 32
     assert log.answer.startswith("VPN")
@@ -149,17 +146,15 @@ async def test_weekly_faq_creates_pending_qa_post(ctx) -> None:
     use_llm(ctx, writer=writer, editor=editor)
     await ctx.runtime.set("publish_mode", "auto")
     ctx.services["pipeline"] = Pipeline(ctx)
-    async with ctx.repo.session() as s:
-        for q in [
-            "VPN nima?",
-            "VPN nima o'zi?",
-            "Parolni qanday saqlash kerak?",
-            "Parolni qanday saqlash kerak",
-            "Telegramni qanday himoyalash mumkin?",
-            "Telegramni qanday himoyalash mumkin",
-        ]:
-            s.add(QALog(user_hash="u", channel="dm", question=q, answer="a"))
-        await s.commit()
+    for q in [
+        "VPN nima?",
+        "VPN nima o'zi?",
+        "Parolni qanday saqlash kerak?",
+        "Parolni qanday saqlash kerak",
+        "Telegramni qanday himoyalash mumkin?",
+        "Telegramni qanday himoyalash mumkin",
+    ]:
+        await ctx.repo.add(QALog(user_hash="u", channel="dm", question=q, answer="a"))
     pid = await QAService(ctx).weekly_faq()
     post = await ctx.repo.get_post(pid)
     assert post.kind == PostKind.QA
@@ -168,7 +163,5 @@ async def test_weekly_faq_creates_pending_qa_post(ctx) -> None:
 
 
 async def test_weekly_faq_needs_three_repeated_questions(ctx) -> None:
-    async with ctx.repo.session() as s:
-        s.add(QALog(user_hash="u", channel="dm", question="Yagona savol", answer="a"))
-        await s.commit()
+    await ctx.repo.add(QALog(user_hash="u", channel="dm", question="Yagona savol", answer="a"))
     assert await QAService(ctx).weekly_faq() is None

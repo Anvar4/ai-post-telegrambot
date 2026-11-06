@@ -83,8 +83,14 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     producthunt_token: SecretStr | None = None
 
+    # Rasm qidirish
+    pexels_api_key: SecretStr | None = None
+
+    # Maʼlumotlar bazasi (MongoDB)
+    mongodb_uri: SecretStr | None = None
+    mongodb_db: str = "it_dunyosi_bot"
+
     # Tizim
-    database_url: str = "sqlite+aiosqlite:///data/bot.db"
     daily_budget_usd: float = 3.0
     log_level: str = "INFO"
     hash_salt: SecretStr | None = None
@@ -132,14 +138,6 @@ class Settings(BaseSettings):
         return self.channel_id
 
     @property
-    def sync_database_url(self) -> str:
-        """APScheduler SQLAlchemyJobStore va Alembic uchun sinxron URL."""
-        url = self.database_url
-        url = url.replace("+aiosqlite", "")
-        url = url.replace("+asyncpg", "+psycopg")
-        return url
-
-    @property
     def data_path(self) -> Path:
         return self.data_dir
 
@@ -167,6 +165,8 @@ class Settings(BaseSettings):
             self.github_token,
             self.producthunt_token,
             self.hash_salt,
+            self.mongodb_uri,
+            self.pexels_api_key,
         ]
         return [s.get_secret_value() for s in secrets if s and s.get_secret_value()]
 

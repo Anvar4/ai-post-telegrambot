@@ -8,9 +8,8 @@ from typing import TYPE_CHECKING, Any
 from app.utils.timeutil import utcnow
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
     from app.db.models import Post
+    from app.db.repo import Repo
 
 
 class PostStatus(StrEnum):
@@ -71,20 +70,17 @@ def can_transition(current: PostStatus | str, new: PostStatus | str) -> bool:
     return new in _FORWARD.get(current, frozenset())
 
 
-async def transition(session: AsyncSession, post: Post, new: PostStatus, actor: str, **details: Any) -> None:
-    """Post holatini o'zgartiradi va audit_log ga yozadi (commit qilmaydi)."""
-    from app.db.models import AuditLog
-
+async def transition(repo: Repo, post: Post, new: PostStatus, actor: str, **details: Any) -> None:
+    """Holatni xotirada o'zgartiradi va audit_log ga yozadi; saqlash — chaqiruvchida (`repo.posts.save`)."""
     current = PostStatus(post.status)
     if not can_transition(current, new):
         raise InvalidTransitionError(f"post {post.id}: {current} -> {new}")
-    post.status = new
+    post.status = PostStatus(new).value
     post.updated_at = utcnow()
-    session.add(
-        AuditLog(
-            ts=utcnow(),
-            actor=actor,
-            action="post.status",
-            details={"post_id": post.id, "from": current.value, "to": PostStatus(new).value, **details},
-        )
+    await repo.audit(
+        actor,
+        "post.status",
+        post_id=post.id,
+        **{"from": current.value, "to": PostStatus(new).value},
+        **details,
     )

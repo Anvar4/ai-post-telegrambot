@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
-from sqlalchemy import select
 
 from app.ai.prompts import load_prompt
 from app.ai.types import BudgetExceededError, Message
@@ -105,32 +104,22 @@ class QAService:
         return answer or FAILED
 
     async def _log(self, user_hash: str, channel: str, question: str, answer: str, *, flagged: bool) -> None:
-        async with self.ctx.repo.session() as s:
-            s.add(
-                QALog(
-                    user_hash=user_hash,
-                    channel=channel,
-                    question=question,
-                    answer=answer,
-                    flagged=flagged,
-                    ts=self.clock(),
-                )
+        await self.ctx.repo.qa_logs.insert(
+            QALog(
+                user_hash=user_hash,
+                channel=channel,
+                question=question,
+                answer=answer,
+                flagged=flagged,
+                ts=self.clock(),
             )
-            await s.commit()
+        )
 
     async def frequent_questions(self, days: int = 7, min_count: int = 2) -> list[tuple[str, int]]:
-        async with self.ctx.repo.session() as s:
-            rows = (
-                (
-                    await s.execute(
-                        select(QALog.question).where(
-                            QALog.ts >= self.clock() - timedelta(days=days), QALog.flagged.is_(False)
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
+        logs = await self.ctx.repo.qa_logs.find(
+            {"ts": {"$gte": self.clock() - timedelta(days=days)}, "flagged": False}
+        )
+        rows = [q.question for q in logs]
         groups: list[tuple[str, int]] = []
         for q in rows:
             for i, (rep, count) in enumerate(groups):

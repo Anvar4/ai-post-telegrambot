@@ -1,4 +1,4 @@
-"""Nashr qiluvchi: idempotent, DRY_RUN himoyasi, 3 urinish, qayta ishga tushganda tiklash."""
+"""Nashr qiluvchi: idempotent (atomik CAS), DRY_RUN himoyasi, 3 urinish, qayta ishga tushganda tiklash."""
 
 from __future__ import annotations
 
@@ -8,12 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from sqlalchemy import select
 
 from app.content.formatting import visible_length
 from app.content.limits import CAPTION_LIMIT
 from app.content.templates import SHARE_CTA
-from app.db.models import Poll, Post
+from app.db.models import Post
 from app.pipeline.compose import compose
 from app.pipeline.state import PostKind, PostStatus, transition
 from app.utils.security import mask_secrets
@@ -58,19 +57,30 @@ class Publisher:
                 key="no-target-chat",
             )
             return False
-        async with self.repo.session() as s:
-            post = await s.get(Post, post_id)
-            if post is None:
-                return False
-            if post.status == PostStatus.PUBLISHED:
-                return True
-            if post.status != PostStatus.SCHEDULED:
-                return False
-            await self._maybe_add_cta(post)
-            await transition(s, post, PostStatus.PUBLISHING, "publisher", chat_id=chat_id)
-            post.chat_id = chat_id
-            await s.commit()
-            messages = compose(post, self._load_image(post.image_path))
+        post = await self.repo.posts.get(post_id)
+        if post is None:
+            return False
+        if post.status == PostStatus.PUBLISHED:
+            return True
+        if post.status != PostStatus.SCHEDULED:
+            return False
+        # Atomik: faqat bitta jarayon SCHEDULED -> PUBLISHING o'tkaza oladi (ikki marta chiqmaydi)
+        if not await self.repo.posts.cas(
+            post_id, {"status": PostStatus.SCHEDULED}, {"status": PostStatus.PUBLISHING, "chat_id": chat_id}
+        ):
+            return False
+        await self.repo.audit(
+            "publisher",
+            "post.status",
+            post_id=post_id,
+            **{"from": "SCHEDULED"},
+            to="PUBLISHING",
+            chat_id=chat_id,
+        )
+        post.status, post.chat_id = PostStatus.PUBLISHING.value, chat_id
+        await self._maybe_add_cta(post)
+        await self.repo.posts.update(post_id, {"text_html": post.text_html})
+        messages = compose(post, self._load_image(post.image_path))
 
         first_id: int | None = None
         poll_id: str | None = None
@@ -93,19 +103,18 @@ class Publisher:
                     mid = await self.sender.send_message(chat_id, msg.text or "")
                 if first_id is None:
                     first_id = mid
-                    await self._save_message_id(post_id, mid)
+                    await self.repo.posts.update(post_id, {"message_id": mid})
         except Exception as exc:
             return await self._on_failure(post_id, first_id, exc)
 
-        async with self.repo.session() as s:
-            post = await s.get(Post, post_id)
-            assert post is not None
-            post.message_id = first_id
-            post.published_at = utcnow()
-            await transition(s, post, PostStatus.PUBLISHED, "publisher", message_id=first_id)
-            if poll_id:
-                await self._attach_poll(s, post_id, poll_id)
-            await s.commit()
+        post = await self.repo.posts.get(post_id)
+        assert post is not None
+        post.message_id = first_id
+        post.published_at = utcnow()
+        await transition(self.repo, post, PostStatus.PUBLISHED, "publisher", message_id=first_id)
+        await self.repo.posts.save(post)
+        if poll_id:
+            await self._attach_poll(post_id, poll_id)
         logger.info("Post #{} chiqarildi (chat {}, message {})", post_id, chat_id, first_id)
         if self.on_published:
             try:
@@ -114,50 +123,43 @@ class Publisher:
                 logger.exception("on_published xatosi")
         return True
 
-    async def _save_message_id(self, post_id: int, mid: int) -> None:
-        async with self.repo.session() as s:
-            post = await s.get(Post, post_id)
-            if post is not None:
-                post.message_id = mid
-                await s.commit()
-
-    async def _attach_poll(self, s: object, post_id: int, poll_id: str) -> None:
-        from sqlalchemy.ext.asyncio import AsyncSession
-
-        assert isinstance(s, AsyncSession)
-        poll = (await s.execute(select(Poll).where(Poll.post_id == post_id))).scalar_one_or_none()
+    async def _attach_poll(self, post_id: int, poll_id: str) -> None:
+        poll = await self.repo.polls.find_one({"post_id": post_id})
         if poll is not None:
-            poll.telegram_poll_id = poll_id
-            poll.closes_at = utcnow() + timedelta(hours=POLL_HOURS.get(poll.purpose, 24))
+            await self.repo.polls.update(
+                poll.id,  # type: ignore[arg-type]
+                {
+                    "telegram_poll_id": poll_id,
+                    "closes_at": utcnow() + timedelta(hours=POLL_HOURS.get(poll.purpose, 24)),
+                },
+            )
 
     async def _on_failure(self, post_id: int, first_id: int | None, exc: Exception) -> bool:
         err = mask_secrets(f"{type(exc).__name__}: {exc}")[:500]
         logger.warning("Post #{} yuborilmadi: {}", post_id, err)
-        async with self.repo.session() as s:
-            post = await s.get(Post, post_id)
-            assert post is not None
-            post.attempts += 1
-            if first_id is not None:
-                # Birinchi xabar ketdi — takror yubormaymiz (dublikat bo'lmasin)
-                post.message_id = first_id
-                post.published_at = utcnow()
-                await transition(s, post, PostStatus.PUBLISHED, "publisher", partial=True, error=err)
-                await s.commit()
-                await self.notifier.notify(
-                    f"⚠️ Post #{post_id} qisman chiqdi: {err}", key=f"partial:{post_id}"
-                )
-                return True
-            if post.attempts >= MAX_ATTEMPTS:
-                await transition(s, post, PostStatus.FAILED, "publisher", error=err)
-                await s.commit()
-                await self.repo.audit("publisher", "error", message=f"Post #{post_id} chiqmadi: {err}")
-                await self.notifier.notify(
-                    f"❌ Post #{post_id} {MAX_ATTEMPTS} urinishdan keyin chiqmadi: {err}",
-                    key=f"failed:{post_id}",
-                )
-            else:
-                await transition(s, post, PostStatus.SCHEDULED, "publisher", retry=post.attempts, error=err)
-                await s.commit()
+        post = await self.repo.posts.get(post_id)
+        assert post is not None
+        post.attempts += 1
+        if first_id is not None:
+            # Birinchi xabar ketdi — takror yubormaymiz (dublikat bo'lmasin)
+            post.message_id = first_id
+            post.published_at = utcnow()
+            await transition(self.repo, post, PostStatus.PUBLISHED, "publisher", partial=True, error=err)
+            await self.repo.posts.save(post)
+            await self.notifier.notify(f"⚠️ Post #{post_id} qisman chiqdi: {err}", key=f"partial:{post_id}")
+            return True
+        if post.attempts >= MAX_ATTEMPTS:
+            await transition(self.repo, post, PostStatus.FAILED, "publisher", error=err)
+            await self.repo.posts.save(post)
+            await self.repo.audit("publisher", "error", message=f"Post #{post_id} chiqmadi: {err}")
+            await self.notifier.notify(
+                f"❌ Post #{post_id} {MAX_ATTEMPTS} urinishdan keyin chiqmadi: {err}", key=f"failed:{post_id}"
+            )
+        else:
+            await transition(
+                self.repo, post, PostStatus.SCHEDULED, "publisher", retry=post.attempts, error=err
+            )
+            await self.repo.posts.save(post)
         return False
 
     async def _maybe_add_cta(self, post: Post) -> None:
@@ -191,19 +193,18 @@ class Publisher:
 
     async def recover_inflight(self) -> int:
         """Qayta ishga tushganda PUBLISHING da qolgan postlarni tekshiradi — hech qachon qayta yubormaydi."""
-        count = 0
-        async with self.repo.session() as s:
-            rows = (await s.execute(select(Post).where(Post.status == PostStatus.PUBLISHING))).scalars().all()
-            failed: list[int] = []
-            for post in rows:
-                count += 1
-                if post.message_id:
-                    post.published_at = post.published_at or post.updated_at
-                    await transition(s, post, PostStatus.PUBLISHED, "recovery")
-                else:
-                    await transition(s, post, PostStatus.FAILED, "recovery", reason="restart during publish")
-                    failed.append(post.id)
-            await s.commit()
+        rows = await self.repo.posts.find({"status": PostStatus.PUBLISHING})
+        failed: list[int] = []
+        for post in rows:
+            if post.message_id:
+                post.published_at = post.published_at or post.updated_at
+                await transition(self.repo, post, PostStatus.PUBLISHED, "recovery")
+            else:
+                await transition(
+                    self.repo, post, PostStatus.FAILED, "recovery", reason="restart during publish"
+                )
+                failed.append(post.id)  # type: ignore[arg-type]
+            await self.repo.posts.save(post)
         for pid in failed:
             await self.notifier.notify(
                 f"⚠️ Post #{pid} yuborilayotganda bot to'xtab qoldi. "
@@ -211,7 +212,7 @@ class Publisher:
                 "/queue orqali qayta rejalashtiring.",
                 key=f"recover:{pid}",
             )
-        return count
+        return len(rows)
 
     async def publish_due(self, now: datetime | None = None) -> int:
         if self.runtime is not None and await self.runtime.paused():
@@ -219,24 +220,18 @@ class Publisher:
         now = now or utcnow()
         hours = int(await self.runtime.get("news_expiry_hours")) if self.runtime is not None else 6
         stale_before = now - timedelta(hours=hours)
-        async with self.repo.session() as s:
-            due = list(
-                (
-                    await s.execute(
-                        select(Post)
-                        .where(Post.status == PostStatus.SCHEDULED, Post.scheduled_at <= now)
-                        .order_by(Post.scheduled_at, Post.id)
-                    )
-                ).scalars()
-            )
-            ids: list[int] = []
-            for post in due:
-                # Bot uzoq o'chiq turgan bo'lsa — eskirgan yangilik chiqarilmaydi
-                if post.kind in EXPIRING_KINDS and post.scheduled_at and post.scheduled_at <= stale_before:
-                    await transition(s, post, PostStatus.EXPIRED, "publisher", reason="stale on publish")
-                else:
-                    ids.append(post.id)
-            await s.commit()
+        due = await self.repo.posts.find(
+            {"status": PostStatus.SCHEDULED, "scheduled_at": {"$lte": now}},
+            sort=[("scheduled_at", 1), ("_id", 1)],
+        )
+        ids: list[int] = []
+        for post in due:
+            # Bot uzoq o'chiq turgan bo'lsa — eskirgan yangilik chiqarilmaydi
+            if post.kind in EXPIRING_KINDS and post.scheduled_at and post.scheduled_at <= stale_before:
+                await transition(self.repo, post, PostStatus.EXPIRED, "publisher", reason="stale on publish")
+                await self.repo.posts.save(post)
+            else:
+                ids.append(post.id)  # type: ignore[arg-type]
         published = 0
         for pid in ids:
             if await self.publish(pid):

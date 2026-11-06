@@ -48,11 +48,12 @@ def test_target_chat_live(tmp_path: Path) -> None:
     assert s.target_chat_id == -1002
 
 
-def test_sync_url(tmp_path: Path) -> None:
-    s = load(tmp_path, "DATABASE_URL=sqlite+aiosqlite:///data/bot.db\n")
-    assert s.sync_database_url == "sqlite:///data/bot.db"
-    s2 = load(tmp_path, "DATABASE_URL=postgresql+asyncpg://u:p@h/db\n")
-    assert s2.sync_database_url == "postgresql+psycopg://u:p@h/db"
+def test_mongodb_settings(tmp_path: Path) -> None:
+    uri = "mongodb+srv://user:secret123@cluster.example.net/otherdb"
+    s = load(tmp_path, f"MONGODB_URI={uri}\n")
+    assert s.mongodb_db == "it_dunyosi_bot"  # URI dagi bazaga emas, o'z bazasiga yozadi
+    assert s.mongodb_uri is not None
+    assert uri in s.secret_values()
 
 
 def test_defaults(tmp_path: Path) -> None:
@@ -67,7 +68,7 @@ def test_defaults(tmp_path: Path) -> None:
 
 def test_env_example_has_no_secret_values() -> None:
     root = Path(__file__).resolve().parents[1]
-    secret_keys = ("TOKEN", "API_KEY", "SALT")
+    secret_keys = ("TOKEN", "API_KEY", "SALT", "URI")
     for line in (root / ".env.example").read_text(encoding="utf-8").splitlines():
         if "=" not in line or line.lstrip().startswith("#"):
             continue

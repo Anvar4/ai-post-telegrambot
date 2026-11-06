@@ -1,38 +1,35 @@
+import gzip
+import json
 import os
-import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app import healthcheck
-from app.utils.backup import BackupService, backup_sqlite, prune_backups
+from app.db.models import Post
+from app.utils.backup import BackupService, export_database, prune_backups
 from app.utils.heartbeat import touch_heartbeat
-from tests.conftest import make_settings
 
 
-def make_db(path: Path) -> None:
-    con = sqlite3.connect(path)
-    con.execute("create table t (x int)")
-    con.execute("insert into t values (42)")
-    con.commit()
-    con.close()
-
-
-async def test_backup_creates_consistent_copy(tmp_path: Path) -> None:
-    db = tmp_path / "bot.db"
-    make_db(db)
-    dest = await backup_sqlite(db, tmp_path / "backups", now=datetime(2026, 11, 6, 3, 0, tzinfo=UTC))
-    assert dest.name == "bot-20261106-030000.db"
-    con = sqlite3.connect(dest)
-    assert con.execute("select x from t").fetchone() == (42,)
-    con.close()
+async def test_export_database_writes_all_collections(repo, tmp_path: Path) -> None:
+    await repo.posts.insert(
+        Post(kind="news", text_html="salom", created_at=datetime(2026, 11, 6, tzinfo=UTC))
+    )
+    await repo.set_setting("rt:paused", False)
+    dest = await export_database(repo.db, tmp_path / "backups", now=datetime(2026, 11, 6, 3, 0, tzinfo=UTC))
+    assert dest.name == "bot-20261106-030000.jsonl.gz"
+    lines = [json.loads(line) for line in gzip.open(dest, "rt", encoding="utf-8")]
+    by_coll = {line["c"] for line in lines}
+    assert {"posts", "settings", "counters"} <= by_coll
+    post = next(line["d"] for line in lines if line["c"] == "posts")
+    assert post["text_html"] == "salom" and post["_id"] == 1
 
 
 def test_prune_backups_keeps_7_days(tmp_path: Path) -> None:
     folder = tmp_path / "backups"
     folder.mkdir()
-    old = folder / "bot-20261020-030000.db"
-    new = folder / "bot-20261105-030000.db"
+    old = folder / "bot-20261020-030000.jsonl.gz"
+    new = folder / "bot-20261105-030000.jsonl.gz"
     other = folder / "notes.txt"
     for f in (old, new, other):
         f.write_text("x")
@@ -43,10 +40,8 @@ def test_prune_backups_keeps_7_days(tmp_path: Path) -> None:
     assert not old.exists() and new.exists() and other.exists()
 
 
-async def test_backup_service_weekly_sends_file_to_admin(ctx, tmp_path: Path) -> None:
-    db = tmp_path / "bot.db"
-    make_db(db)
-    ctx.settings = make_settings(tmp_path, database_url=f"sqlite+aiosqlite:///{db.as_posix()}")
+async def test_backup_service_weekly_sends_file_to_admin(ctx) -> None:
+    await ctx.repo.posts.insert(Post(kind="news", text_html="x"))
     monday = datetime(2026, 11, 9, 3, 0, tzinfo=UTC)
     path = await BackupService(ctx, clock=lambda: monday).run()
     assert path is not None and path.exists()
@@ -55,11 +50,6 @@ async def test_backup_service_weekly_sends_file_to_admin(ctx, tmp_path: Path) ->
     ctx.sender.sent.clear()
     await BackupService(ctx, clock=lambda: datetime(2026, 11, 10, 3, 0, tzinfo=UTC)).run()
     assert [m for m in ctx.sender.sent if m.method == "document"] == []
-
-
-async def test_backup_service_skips_non_sqlite(ctx, tmp_path: Path) -> None:
-    ctx.settings = make_settings(tmp_path, database_url="postgresql+asyncpg://u:p@h/db")
-    assert await BackupService(ctx).run() is None
 
 
 def test_healthcheck_ok_and_stale_kills(tmp_path: Path, monkeypatch) -> None:

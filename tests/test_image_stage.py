@@ -12,17 +12,15 @@ from tests.fakes import FakeImage, ScriptedLLM
 
 
 async def add_post(ctx, kind=PostKind.NEWS) -> int:
-    async with ctx.repo.session() as s:
-        post = Post(
-            kind=kind,
-            status=PostStatus.CHECKED,
-            text_html="x",
-            title_short="Chrome zaifligi",
-            image_prompt="browser with a shield",
-        )
-        s.add(post)
-        await s.commit()
-        return post.id
+    post = Post(
+        kind=kind,
+        status=PostStatus.CHECKED,
+        text_html="x",
+        title_short="Chrome zaifligi",
+        image_prompt="browser with a shield",
+    )
+    await ctx.repo.add(post)
+    return post.id
 
 
 async def test_image_saved_and_linked_to_post(ctx) -> None:

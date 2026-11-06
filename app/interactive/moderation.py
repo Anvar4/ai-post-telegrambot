@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
-from sqlalchemy import func, select
 
 from app.ai.prompts import load_prompt
 from app.ai.schemas import ModerationOutput
@@ -117,20 +116,14 @@ class ModerationService:
         await self._record(chat_id, hash_user_id(user_id, self.ctx.salt), "", "ban", "ban")
 
     async def _prior_violations(self, chat_id: int, user_hash: str) -> int:
-        async with self.ctx.repo.session() as s:
-            return int(
-                await s.scalar(
-                    select(func.count())
-                    .select_from(ModerationEvent)
-                    .where(
-                        ModerationEvent.user_hash == user_hash,
-                        ModerationEvent.chat_id == chat_id,
-                        ModerationEvent.action != "none",
-                        ModerationEvent.ts >= self.clock() - timedelta(days=7),
-                    )
-                )
-                or 0
-            )
+        return await self.ctx.repo.moderation_events.count(
+            {
+                "user_hash": user_hash,
+                "chat_id": chat_id,
+                "action": {"$ne": "none"},
+                "ts": {"$gte": self.clock() - timedelta(days=7)},
+            }
+        )
 
     async def _delete(self, chat_id: int, message_id: int) -> None:
         try:
@@ -145,29 +138,21 @@ class ModerationService:
             logger.warning("Xabar yuborilmadi: {}", exc)
 
     async def _record(self, chat_id: int, user_hash: str, text: str, label: str, action: str) -> None:
-        async with self.ctx.repo.session() as s:
-            s.add(
-                ModerationEvent(
-                    ts=self.clock(),
-                    chat_id=chat_id,
-                    user_hash=user_hash,
-                    excerpt=text[:200],
-                    label=label,
-                    action=action,
-                )
+        await self.ctx.repo.moderation_events.insert(
+            ModerationEvent(
+                ts=self.clock(),
+                chat_id=chat_id,
+                user_hash=user_hash,
+                excerpt=text[:200],
+                label=label,
+                action=action,
             )
-            await s.commit()
+        )
 
     async def daily_summary(self, now: datetime | None = None) -> str:
         start, end = day_bounds(now or self.clock(), self.ctx.settings.tz)
-        async with self.ctx.repo.session() as s:
-            rows = (
-                await s.execute(
-                    select(ModerationEvent.label, ModerationEvent.action).where(
-                        ModerationEvent.ts >= start, ModerationEvent.ts < end
-                    )
-                )
-            ).all()
+        events = await self.ctx.repo.moderation_events.find({"ts": {"$gte": start, "$lt": end}})
+        rows = [(e.label, e.action) for e in events]
         if not rows:
             return "🛡 Moderatsiya: bugun qoidabuzarlik yoʻq."
         labels = Counter(r[0] for r in rows)

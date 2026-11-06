@@ -1,37 +1,27 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.ai.router import AIRouter
 from app.config import Settings
 from app.context import AppContext
 from app.db.repo import Repo
-from app.db.session import create_all, create_engine, make_sessionmaker
 from app.utils.runtime import Runtime
 from tests.fakes import FakeNotifier, FakeSender
+from tests.mongo_fake import FakeDatabase
 
 
 @pytest_asyncio.fixture
-async def engine() -> AsyncIterator[AsyncEngine]:
-    eng = create_engine("sqlite+aiosqlite:///:memory:")
-    await create_all(eng)
-    yield eng
-    await eng.dispose()
+async def db() -> FakeDatabase:
+    return FakeDatabase()
 
 
 @pytest_asyncio.fixture
-async def sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
-    return make_sessionmaker(engine)
-
-
-@pytest_asyncio.fixture
-async def repo(sessionmaker: async_sessionmaker[AsyncSession]) -> Repo:
-    return Repo(sessionmaker, tz="Asia/Tashkent")
+async def repo(db: FakeDatabase) -> Repo:
+    return Repo(db, tz="Asia/Tashkent")  # type: ignore[arg-type]
 
 
 def make_settings(tmp_path: Path, **overrides: Any) -> Settings:

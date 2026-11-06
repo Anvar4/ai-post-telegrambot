@@ -27,11 +27,9 @@ class FakePipeline:
 
 
 async def add_post(ctx, status=PostStatus.PENDING_APPROVAL, **kw) -> int:
-    async with ctx.repo.session() as s:
-        post = Post(kind=PostKind.NEWS, status=status, text_html="📰 <b>Matn</b>", title_short="Matn", **kw)
-        s.add(post)
-        await s.commit()
-        return post.id
+    post = Post(kind=PostKind.NEWS, status=status, text_html="📰 <b>Matn</b>", title_short="Matn", **kw)
+    await ctx.repo.add(post)
+    return post.id
 
 
 def cb(action: str, pid: int) -> str:

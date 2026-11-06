@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import secrets
 import sys
@@ -21,8 +20,8 @@ from app.bot.sender import AiogramSender
 from app.bot.setup import ALLOWED_UPDATES, build_dispatcher
 from app.config import Settings, load_settings
 from app.context import AppContext, set_ctx
+from app.db.mongo import connect, ensure_indexes
 from app.db.repo import Repo
-from app.db.session import create_engine, make_sessionmaker, run_migrations
 from app.logging_setup import setup_logging
 from app.services import register_services
 from app.utils.budget import BudgetGuard
@@ -43,14 +42,19 @@ async def _salt(settings: Settings, repo: Repo) -> str:
     return str(salt)
 
 
-async def build_context(settings: Settings) -> tuple[AppContext, Bot, Any]:
+async def build_context(settings: Settings, db: Any = None) -> tuple[AppContext, Bot, Any]:
+    """Kontekstni yig'adi. `db` berilmasa MONGODB_URI ga ulanadi (qaytgan `client` ni yopish kerak)."""
     for value in settings.secret_values():
         register_secret(value)
+    client = None
+    if db is None:
+        if settings.mongodb_uri is None or not settings.mongodb_uri.get_secret_value():
+            raise ValueError("MONGODB_URI .env da yo'q — MongoDB ulanish manzilini kiriting")
+        client, db = connect(settings.mongodb_uri.get_secret_value(), settings.mongodb_db)
     settings.data_path.mkdir(parents=True, exist_ok=True)
     (settings.data_path / "images").mkdir(exist_ok=True)
-    await asyncio.to_thread(run_migrations, settings.database_url)
-    engine = create_engine(settings.database_url)
-    repo = Repo(make_sessionmaker(engine), tz=settings.tz)
+    await ensure_indexes(db)
+    repo = Repo(db, tz=settings.tz)
     token = settings.telegram_bot_token.get_secret_value() if settings.telegram_bot_token else ""
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     sender = AiogramSender(bot)
@@ -85,7 +89,7 @@ async def build_context(settings: Settings) -> tuple[AppContext, Bot, Any]:
     from app.collectors.seed import seed_sources
 
     await seed_sources(repo)
-    return ctx, bot, engine
+    return ctx, bot, client
 
 
 async def _startup_checks(ctx: AppContext) -> None:
@@ -127,7 +131,11 @@ async def run() -> None:
     if not settings.telegram_bot_token:
         logger.error("TELEGRAM_BOT_TOKEN .env da yo'q. .env.example dan nusxa olib to'ldiring.")
         sys.exit(1)
-    ctx, bot, engine = await build_context(settings)
+    try:
+        ctx, bot, client = await build_context(settings)
+    except Exception as exc:
+        logger.error("Ishga tushirib bo'lmadi (MongoDB ulanishini tekshiring): {}", exc)
+        sys.exit(1)
     set_ctx(ctx)
     (settings.data_path / "bot.pid").write_text(str(os.getpid()), encoding="utf-8")
     dp = build_dispatcher(ctx)
@@ -154,5 +162,6 @@ async def run() -> None:
         if ctx.http is not None:
             await ctx.http.aclose()
         await bot.session.close()
-        await engine.dispose()
+        if client is not None:
+            await client.close()
         set_ctx(None)

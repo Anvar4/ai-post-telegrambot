@@ -1,4 +1,4 @@
-"""APScheduler (AsyncIOScheduler + SQLAlchemyJobStore) sozlash."""
+"""APScheduler (AsyncIOScheduler + MongoDBJobStore) sozlash."""
 
 from __future__ import annotations
 
@@ -53,9 +53,15 @@ async def setup_scheduler(ctx: AppContext, *, persistent: bool = True) -> AsyncI
     tz = ZoneInfo(ctx.settings.tz)
     jobstore: Any
     if persistent:
-        from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+        from apscheduler.jobstores.mongodb import MongoDBJobStore
+        from pymongo import MongoClient
 
-        jobstore = SQLAlchemyJobStore(url=ctx.settings.sync_database_url)
+        uri = ctx.settings.mongodb_uri.get_secret_value() if ctx.settings.mongodb_uri else ""
+        jobstore = MongoDBJobStore(
+            database=ctx.settings.mongodb_db,
+            collection="apscheduler_jobs",
+            client=MongoClient(uri, serverSelectionTimeoutMS=20_000),
+        )
     else:
         jobstore = MemoryJobStore()
     scheduler = AsyncIOScheduler(

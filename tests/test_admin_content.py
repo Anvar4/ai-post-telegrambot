@@ -1,7 +1,5 @@
 from datetime import timedelta
 
-from sqlalchemy import select
-
 from app.bot.keyboards import SourceCB
 from app.bot.setup import build_dispatcher
 from app.db.models import Post, Source
@@ -40,23 +38,21 @@ async def test_post_command_calls_pipeline(ctx) -> None:
 
 
 async def test_queue_lists_pending_and_scheduled(ctx) -> None:
-    async with ctx.repo.session() as s:
-        s.add(
-            Post(
-                kind=PostKind.NEWS, status=PostStatus.PENDING_APPROVAL, text_html="a", title_short="Kutmoqda"
-            )
+    await ctx.repo.add(
+        Post(kind=PostKind.NEWS, status=PostStatus.PENDING_APPROVAL, text_html="a", title_short="Kutmoqda")
+    )
+    await ctx.repo.add(
+        Post(
+            kind=PostKind.TOOL,
+            status=PostStatus.SCHEDULED,
+            text_html="b",
+            title_short="Rejada",
+            scheduled_at=utcnow() + timedelta(hours=2),
         )
-        s.add(
-            Post(
-                kind=PostKind.TOOL,
-                status=PostStatus.SCHEDULED,
-                text_html="b",
-                title_short="Rejada",
-                scheduled_at=utcnow() + timedelta(hours=2),
-            )
-        )
-        s.add(Post(kind=PostKind.NEWS, status=PostStatus.PUBLISHED, text_html="c", title_short="Chiqqan"))
-        await s.commit()
+    )
+    await ctx.repo.add(
+        Post(kind=PostKind.NEWS, status=PostStatus.PUBLISHED, text_html="c", title_short="Chiqqan")
+    )
     dp, bot = dispatcher(ctx)
     await dp.feed_update(bot, msg_update("/queue", ADMIN))
     text = "\n".join(sent_texts(bot))
@@ -65,17 +61,15 @@ async def test_queue_lists_pending_and_scheduled(ctx) -> None:
 
 
 async def test_time_command_reschedules(ctx) -> None:
-    async with ctx.repo.session() as s:
-        post = Post(
-            kind=PostKind.TOOL,
-            status=PostStatus.SCHEDULED,
-            text_html="b",
-            title_short="R",
-            scheduled_at=utcnow() + timedelta(hours=2),
-        )
-        s.add(post)
-        await s.commit()
-        pid = post.id
+    post = Post(
+        kind=PostKind.TOOL,
+        status=PostStatus.SCHEDULED,
+        text_html="b",
+        title_short="R",
+        scheduled_at=utcnow() + timedelta(hours=2),
+    )
+    await ctx.repo.add(post)
+    pid = post.id
     dp, bot = dispatcher(ctx)
     await dp.feed_update(bot, msg_update(f"/time {pid} 23:59", ADMIN))
     post = await ctx.repo.get_post(pid)
@@ -85,24 +79,20 @@ async def test_time_command_reschedules(ctx) -> None:
 
 
 async def test_sources_list_and_toggle(ctx) -> None:
-    async with ctx.repo.session() as s:
-        src = Source(name="Krebs", type="rss", url="https://krebs.example/feed", category="kiber", trust=5)
-        s.add(src)
-        await s.commit()
-        sid = src.id
+    src = Source(name="Krebs", type="rss", url="https://krebs.example/feed", category="kiber", trust=5)
+    await ctx.repo.add(src)
+    sid = src.id
     dp, bot = dispatcher(ctx)
     await dp.feed_update(bot, msg_update("/sources", ADMIN))
     assert any("Krebs" in t for t in sent_texts(bot))
     await dp.feed_update(bot, callback_update(SourceCB(action="toggle", source_id=sid).pack(), ADMIN))
-    async with ctx.repo.session() as s:
-        assert (await s.get(Source, sid)).enabled is False
+    assert (await ctx.repo.get(Source, sid)).enabled is False
 
 
 async def test_source_add_command(ctx) -> None:
     dp, bot = dispatcher(ctx)
     await dp.feed_update(bot, msg_update("/source_add https://new.example/feed kiber", ADMIN))
-    async with ctx.repo.session() as s:
-        src = (await s.execute(select(Source))).scalar_one()
+    src = (await ctx.repo.all(Source))[0]
     assert (src.url, src.category, src.type) == ("https://new.example/feed", "kiber", "rss")
 
 

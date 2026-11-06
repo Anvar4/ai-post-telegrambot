@@ -22,11 +22,8 @@ async def add_post(ctx, **kw) -> int:
         "publish_key": None,
     }
     values.update(kw)
-    async with ctx.repo.session() as s:
-        post = Post(**values)
-        s.add(post)
-        await s.commit()
-        return post.id
+    post = await ctx.repo.posts.insert(Post(**values))
+    return post.id
 
 
 def publisher(ctx, **kw) -> Publisher:
@@ -161,18 +158,15 @@ async def test_poll_post_sends_poll_and_stores_poll_id(ctx) -> None:
             }
         },
     )
-    async with ctx.repo.session() as s:
-        s.add(Poll(post_id=pid, question="Qaysi tugma nusxa oladi?", options=[], purpose="quiz"))
-        await s.commit()
+    await ctx.repo.polls.insert(
+        Poll(post_id=pid, question="Qaysi tugma nusxa oladi?", options=[], purpose="quiz")
+    )
     await publisher(ctx).publish(pid)
     sent = ctx.sender.sent[0]
     assert sent.method == "poll"
     assert sent.kwargs["is_anonymous"] is True
     assert sent.kwargs["correct_option_id"] == 0
-    async with ctx.repo.session() as s:
-        from sqlalchemy import select
-
-        poll = (await s.execute(select(Poll))).scalar_one()
+    (poll,) = await ctx.repo.polls.find({})
     assert poll.telegram_poll_id == f"poll-{sent.message_id}"
     assert poll.closes_at is not None
 
@@ -201,3 +195,14 @@ async def test_publish_due_expires_stale_news_instead_of_publishing(ctx) -> None
     assert (await ctx.repo.get_post(stale)).status == PostStatus.EXPIRED
     assert (await ctx.repo.get_post(stale_tool)).status == PostStatus.PUBLISHED
     assert (await ctx.repo.get_post(fresh)).status == PostStatus.PUBLISHED
+
+
+async def test_concurrent_publish_sends_once(ctx) -> None:
+    import asyncio
+
+    pid = await add_post(ctx)
+    pub = publisher(ctx)
+    results = await asyncio.gather(pub.publish(pid), pub.publish(pid), pub.publish(pid))
+    assert len(ctx.sender.sent) == 1
+    assert results.count(True) >= 1
+    assert (await ctx.repo.get_post(pid)).status == PostStatus.PUBLISHED
