@@ -568,11 +568,8 @@ class Pipeline:
             )
             for post in rows:
                 if post.kind in EXPIRING_KINDS:
-                    ref = (
-                        post.scheduled_at
-                        if post.status == S.SCHEDULED and post.scheduled_at
-                        else post.created_at
-                    )
+                    # Kelajakka (masalan, tungi shoshilinch → 07:30) qo'yilgan post vaqtidan oldin eskirmaydi
+                    ref = max(post.created_at, post.scheduled_at) if post.scheduled_at else post.created_at
                     if ref <= now - expiry:
                         await transition(s, post, S.EXPIRED, "scheduler", reason="news expired")
                         changed += 1

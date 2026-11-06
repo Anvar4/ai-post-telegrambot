@@ -6,13 +6,17 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from loguru import logger
 from sqlalchemy import func, select
 
 from app.db.models import Poll, Post, PostMetric, SubscriberSnapshot
+from app.pipeline.state import PostKind
 from app.utils.timeutil import utcnow
 
 if TYPE_CHECKING:
     from app.context import AppContext
+
+MILESTONES = (1000, 2000, 5000, 10_000, 20_000, 50_000, 100_000)
 
 
 def engagement_score(*, reactions: int, comments: int, poll_votes: int, subscribers: int) -> float:
@@ -39,10 +43,52 @@ class MetricsService:
         if chat is None:
             return None
         count = await self.ctx.sender.member_count(chat)
+        previous = await self.latest_subscribers() if await self._has_snapshot() else None
         async with self.ctx.repo.session() as s:
             s.add(SubscriberSnapshot(ts=self.clock(), count=count))
             await s.commit()
+        if previous is not None:
+            for milestone in MILESTONES:
+                if previous < milestone <= count:
+                    await self._celebrate(milestone)
         return count
+
+    async def _has_snapshot(self) -> bool:
+        async with self.ctx.repo.session() as s:
+            return await s.scalar(select(SubscriberSnapshot.id).limit(1)) is not None
+
+    async def _celebrate(self, milestone: int) -> None:
+        """Marra (1000, 5000…): maxsus post va test qoralamalari — admin tasdig'i bilan (SPEC 8.4)."""
+        done = list(await self.ctx.repo.get_setting("milestones_done", []))
+        if milestone in done:
+            return
+        await self.ctx.repo.set_setting("milestones_done", [*done, milestone])
+        await self.ctx.notifier.notify(
+            f"🎉 Kanal {milestone} obunachiga yetdi! Maxsus post va test qoralamalari tasdiqqa yuborildi.",
+            key=f"milestone:{milestone}",
+        )
+        pipeline = self.ctx.services.get("pipeline")
+        quizzes = self.ctx.services.get("quizzes")
+        try:
+            if pipeline is not None:
+                await pipeline.prepare_custom(
+                    PostKind.TIP,
+                    source_text=(
+                        f"Kanal {milestone} obunachiga yetdi. Obunachilarga samimiy minnatdorchilik, "
+                        "kanal nimalar haqida yozishi (IT yangiliklari, kiberxavfsizlik ogohlantirishlari, "
+                        "foydali ilova va maslahatlar, soʻrovnoma va testlar), keyingi rejalar va "
+                        "doʻstlarga ulashishga chaqiriq."
+                    ),
+                    story_title=f"{milestone} obunachi — rahmat!",
+                    category="marra",
+                    force_approval=True,
+                )
+            if quizzes is not None:
+                await quizzes.create(
+                    f"IT bilimlari — {milestone} obunachi marrasi uchun maxsus test", created_by="admin"
+                )
+        except Exception as exc:
+            logger.warning("Marra kontenti tayyorlanmadi: {}", exc)
 
     async def latest_subscribers(self) -> int:
         async with self.ctx.repo.session() as s:

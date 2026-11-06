@@ -307,3 +307,33 @@ async def test_best_times_needs_two_weeks_of_data(ctx) -> None:
     await add_published(ctx, message_id=2, title="Eski", hours_ago=24 * 16)
     text = await svc["reports"].best_times()
     assert text is not None and "Eng faol vaqtlar" in text and "/set slots" in text
+
+
+class _FakeCreator:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    async def create(self, topic, **kw):
+        self.calls.append((topic, kw.get("created_by")))
+        return 1
+
+    async def prepare_custom(self, kind, **kw):
+        self.calls.append((kind, kw.get("story_title")))
+        return 2
+
+
+async def test_subscriber_milestone_triggers_special_post_and_quiz(ctx) -> None:
+    svc = services(ctx)
+    quizzes, pipeline = _FakeCreator(), _FakeCreator()
+    ctx.services["quizzes"], ctx.services["pipeline"] = quizzes, pipeline
+    ctx.sender.members = 990
+    await svc["metrics"].snapshot()
+    assert quizzes.calls == [] and pipeline.calls == []
+    ctx.sender.members = 1003
+    await svc["metrics"].snapshot()
+    assert len(pipeline.calls) == 1 and "1000" in pipeline.calls[0][1]
+    assert len(quizzes.calls) == 1 and quizzes.calls[0][1] == "admin"
+    assert any("1000" in m[0] for m in ctx.notifier.messages)
+    ctx.sender.members = 1010  # bir marra ikki marta nishonlanmaydi
+    await svc["metrics"].snapshot()
+    assert len(pipeline.calls) == 1

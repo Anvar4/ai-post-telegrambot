@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 MAX_ATTEMPTS = 3
 CTA_KINDS = frozenset({PostKind.NEWS, PostKind.TOOL, PostKind.SITE, PostKind.TIP})
+EXPIRING_KINDS = frozenset({PostKind.NEWS, PostKind.ALERT, PostKind.DIGEST})
 POLL_HOURS = {"fun": 24, "quiz": 24, "research": 48}
 
 
@@ -216,18 +217,26 @@ class Publisher:
         if self.runtime is not None and await self.runtime.paused():
             return 0
         now = now or utcnow()
+        hours = int(await self.runtime.get("news_expiry_hours")) if self.runtime is not None else 6
+        stale_before = now - timedelta(hours=hours)
         async with self.repo.session() as s:
-            ids = (
+            due = list(
                 (
                     await s.execute(
-                        select(Post.id)
+                        select(Post)
                         .where(Post.status == PostStatus.SCHEDULED, Post.scheduled_at <= now)
                         .order_by(Post.scheduled_at, Post.id)
                     )
-                )
-                .scalars()
-                .all()
+                ).scalars()
             )
+            ids: list[int] = []
+            for post in due:
+                # Bot uzoq o'chiq turgan bo'lsa — eskirgan yangilik chiqarilmaydi
+                if post.kind in EXPIRING_KINDS and post.scheduled_at and post.scheduled_at <= stale_before:
+                    await transition(s, post, PostStatus.EXPIRED, "publisher", reason="stale on publish")
+                else:
+                    ids.append(post.id)
+            await s.commit()
         published = 0
         for pid in ids:
             if await self.publish(pid):

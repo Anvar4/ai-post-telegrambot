@@ -294,3 +294,25 @@ async def test_ai_failure_during_draft_marks_post_failed_and_tries_next_story(ct
     assert first.status == PostStatus.FAILED
     assert second.id == pid and second.status == PostStatus.PENDING_APPROVAL
     assert any("#" + str(first.id) in m[0] for m in ctx.notifier.messages)
+
+
+async def test_night_urgent_alert_does_not_expire_before_its_morning_slot(ctx) -> None:
+    created = datetime(2026, 11, 6, 23, 30, tzinfo=TZ).astimezone(UTC)
+    morning = datetime(2026, 11, 7, 7, 30, tzinfo=TZ).astimezone(UTC)
+    async with ctx.repo.session() as s:
+        s.add(
+            Post(
+                kind=PostKind.ALERT,
+                status=PostStatus.PENDING_APPROVAL,
+                text_html="x",
+                created_at=created,
+                approval_sent_at=created,
+                scheduled_at=morning,
+            )
+        )
+        await s.commit()
+    at_0600 = datetime(2026, 11, 7, 6, 0, tzinfo=TZ).astimezone(UTC)
+    await pipeline(ctx).expire_stale(at_0600)
+    assert (await posts(ctx))[0].status == PostStatus.PENDING_APPROVAL
+    await pipeline(ctx).expire_stale(morning + timedelta(hours=6, minutes=1))
+    assert (await posts(ctx))[0].status == PostStatus.EXPIRED

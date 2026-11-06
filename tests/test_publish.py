@@ -191,3 +191,13 @@ def test_compose_text_only_truncates_to_limit() -> None:
     msgs = compose(post, None)
     assert len(msgs) == 1 and msgs[0].kind == "text"
     assert len(msgs[0].text) <= 4096
+
+
+async def test_publish_due_expires_stale_news_instead_of_publishing(ctx) -> None:
+    stale = await add_post(ctx, scheduled_at=utcnow() - timedelta(hours=20))
+    stale_tool = await add_post(ctx, kind=PostKind.TOOL, scheduled_at=utcnow() - timedelta(hours=20))
+    fresh = await add_post(ctx, scheduled_at=utcnow() - timedelta(minutes=2))
+    assert await publisher(ctx).publish_due(utcnow()) == 2
+    assert (await ctx.repo.get_post(stale)).status == PostStatus.EXPIRED
+    assert (await ctx.repo.get_post(stale_tool)).status == PostStatus.PUBLISHED
+    assert (await ctx.repo.get_post(fresh)).status == PostStatus.PUBLISHED
