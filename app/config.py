@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     web_host: str = "0.0.0.0"
     web_port: int = 8080
 
+    # Telethon (adminning Telegram akkaunti): post koʻrishlari va kanal statistikasi
+    tg_api_id: int | None = None
+    tg_api_hash: SecretStr | None = None
+    tg_session: SecretStr | None = None
+
     # Tizim
     daily_budget_usd: float = 3.0
     log_level: str = "INFO"
@@ -156,6 +161,10 @@ class Settings(BaseSettings):
             return {}
         return data if isinstance(data, dict) else {}
 
+    @property
+    def telethon_ready(self) -> bool:
+        return bool(self.tg_api_id and self.tg_api_hash and self.tg_session)
+
     def is_admin(self, user_id: int | None) -> bool:
         return user_id is not None and user_id in self.admin_ids
 
@@ -172,6 +181,8 @@ class Settings(BaseSettings):
             self.hash_salt,
             self.mongodb_uri,
             self.pexels_api_key,
+            self.tg_api_hash,
+            self.tg_session,
         ]
         return [s.get_secret_value() for s in secrets if s and s.get_secret_value()]
 

@@ -145,6 +145,11 @@ async def poll_close_job(ctx: AppContext) -> None:
     await _call(ctx, "polls", "close_due")
 
 
+@job("channel_stats")
+async def channel_stats_job(ctx: AppContext) -> None:
+    await _call(ctx, "channel_stats", "collect")
+
+
 @job("qa_faq")
 async def qa_faq_job(ctx: AppContext) -> None:
     await _call(ctx, "qa", "weekly_faq")

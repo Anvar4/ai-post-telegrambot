@@ -108,6 +108,15 @@ async function renderStats() {
       el("b", { text: "$" + d.spent_today.toFixed(2) + " / $" + d.budget_usd.toFixed(2) })),
   );
 
+  const cs = d.channel_stats;
+  const sources = cs && cs.views_by_source && Object.keys(cs.views_by_source).length ? [
+    el("h2", { text: "Koʻrishlar manbasi" }),
+    sourceCard(cs),
+  ] : [
+    el("h2", { text: "Koʻrishlar manbasi" }),
+    el("div", { class: "card muted", text: "Koʻrishlar va obuna boʻlmagan kuzatuvchilar Telethon ulangach chiqadi (TG_API_ID, TG_API_HASH va scripts/telethon_login.py)." }),
+  ];
+
   const invites = d.invite_links.length ? [
     el("h2", { text: "Taklif havolalari" }),
     el("div", { class: "card list" }, d.invite_links.map((l) => el("div", { class: "row" },
@@ -116,7 +125,7 @@ async function renderStats() {
   ] : [];
 
   section.replaceChildren(seg, kpis, el("h2", { text: "Obunachilar oqimi" }), chartCard,
-    el("h2", { text: "Eng yaxshi postlar" }), top, el("h2", { text: "Holat" }), queue, ...invites);
+    ...sources, el("h2", { text: "Eng yaxshi postlar" }), top, el("h2", { text: "Holat" }), queue, ...invites);
   drawFlowChart(canvas, d.series);
 }
 
@@ -126,6 +135,28 @@ function updateHeader(d) {
   const badge = document.getElementById("queue-badge");
   badge.hidden = !d.queue.pending;
   badge.textContent = d.queue.pending;
+}
+
+const SOURCE_UZ = { Followers: "Obunachilar", Channels: "Boshqa kanallar", Search: "Qidiruv", URL: "Havolalar",
+  Groups: "Guruhlar", PMs: "Shaxsiy chatlar", Other: "Boshqa", "Similar channels": "Oʻxshash kanallar" };
+
+function sourceCard(cs) {
+  const entries = Object.entries(cs.views_by_source).sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((s, [, v]) => s + v, 0) || 1;
+  const rows = entries.map(([name, v]) => el("div", { class: "row" },
+    el("div", { class: "grow" },
+      el("div", { text: SOURCE_UZ[name] || name }),
+      el("div", { class: "bar" }, el("i", { style: "width:" + Math.round(100 * v / total) + "%" }))),
+    el("b", { text: fmt(v) })));
+  const nf = cs.non_follower_views;
+  return el("div", { class: "card list" },
+    nf != null ? el("div", { class: "row" }, el("div", { class: "grow" }, "👀 Obuna boʻlmaganlar koʻrgan"),
+      el("b", { text: fmt(nf) + " (" + Math.round(100 * nf / total) + "%)" })) : null,
+    cs.followers ? el("div", { class: "row" }, el("div", { class: "grow" }, "👥 Telegram statistikasi boʻyicha obunachilar"),
+      el("b", { text: fmt(cs.followers.current) })) : null,
+    cs.notifications_pct != null ? el("div", { class: "row" }, el("div", { class: "grow" }, "🔔 Bildirishnomasi yoqilgan"),
+      el("b", { text: cs.notifications_pct + "%" })) : null,
+    rows);
 }
 
 function kpi(label, value, delta, cls) {

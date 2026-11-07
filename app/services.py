@@ -43,6 +43,15 @@ def register_services(ctx: AppContext) -> None:
     ctx.services["growth"] = GrowthService(ctx)
     ctx.services["backup"] = BackupService(ctx)
     ctx.services["publisher"] = Publisher(ctx.repo, ctx.sender, s, ctx.notifier, runtime=ctx.runtime)
+    if s.telethon_ready:
+        from app.analytics.channel_stats import ChannelStatsService, TelethonStatsSource
+
+        async def telethon_source() -> TelethonStatsSource:
+            return await TelethonStatsSource.connect(
+                int(s.tg_api_id or 0), _secret(s.tg_api_hash) or "", _secret(s.tg_session) or ""
+            )
+
+        ctx.services["channel_stats"] = ChannelStatsService(ctx, telethon_source)
     if ctx.http is not None:
         ctx.services["collector"] = CollectorService(
             ctx.repo,

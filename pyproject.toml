@@ -22,6 +22,8 @@ dependencies = [
     "pydantic-settings>=2.3",
     "loguru>=0.7",
     "openai>=1.40",
+    "aiohttp>=3.9",
+    "telethon>=1.40",
 ]
 
 [project.optional-dependencies]

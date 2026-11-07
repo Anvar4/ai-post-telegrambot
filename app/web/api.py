@@ -163,6 +163,7 @@ async def overview(request: web.Request) -> web.Response:
                 "scheduled": sum(p.status == S.SCHEDULED for p in queue),
             },
             "invite_links": stats["invite_links"],
+            "channel_stats": await ctx.repo.get_setting("channel_stats"),
             "ai_cost_usd": stats["ai_cost_usd"],
             "spent_today": round(await ctx.repo.spent_today(), 4),
             "budget_usd": ctx.settings.daily_budget_usd,

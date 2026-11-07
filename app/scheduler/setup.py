@@ -88,6 +88,10 @@ async def setup_scheduler(ctx: AppContext) -> AsyncIOScheduler:
     add("daily_report_job", CronTrigger(hour=21, minute=30, timezone=tz), "daily_report")
     add("weekly_report_job", CronTrigger(day_of_week="mon", hour=9, minute=0, timezone=tz), "weekly_report")
     add("poll_close_job", IntervalTrigger(minutes=30, timezone=tz), "poll_close")
+    if ctx.services.get("channel_stats") is not None:
+        add(
+            "channel_stats_job", IntervalTrigger(minutes=30, timezone=tz), "channel_stats", next_run_time=soon
+        )
     add("qa_faq_job", CronTrigger(day_of_week="sat", hour=12, minute=0, timezone=tz), "qa_faq")
     ctx.services["scheduler"] = scheduler
     return scheduler

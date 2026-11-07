@@ -98,6 +98,9 @@ h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacin
                   background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .stepper b { min-width: 22px; text-align: center; font-size: 17px; }
 
+.bar { height: 6px; border-radius: 99px; background: var(--line); margin-top: 6px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+
 .empty { text-align: center; color: var(--hint); padding: 30px 10px; }
 .empty div { font-size: 34px; margin-bottom: 6px; }
 
