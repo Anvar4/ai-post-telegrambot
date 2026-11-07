@@ -7,7 +7,7 @@ from datetime import datetime
 from urllib.parse import urlencode
 
 from aiogram.filters.callback_data import CallbackData
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from app.utils.timeutil import to_tz, utcnow
 
@@ -64,6 +64,18 @@ def main_menu() -> InlineKeyboardMarkup:
                 for title, action in MENU_ITEMS[i : i + 2]
             ]
         )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def start_keyboard(webapp_url: str | None) -> InlineKeyboardMarkup:
+    """/start: katta "Panel" tugmasi (mini ilova) + tezkor boʻlimlar + buyruqlar roʻyxati."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if webapp_url:
+        rows.append(
+            [InlineKeyboardButton(text="📱 Boshqaruv panelini ochish", web_app=WebAppInfo(url=webapp_url))]
+        )
+    rows += main_menu().inline_keyboard
+    rows.append([InlineKeyboardButton(text="❓ Buyruqlar", callback_data=MenuCB(action="help").pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

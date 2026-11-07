@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <title>IT Dunyosi — panel</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="logo">ID</div>
+      <div>
+        <div class="title">IT Dunyosi</div>
+        <div class="subtitle" id="status-line">Yuklanmoqda…</div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="tab-stats" class="tab active"></section>
+    <section id="tab-posts" class="tab"></section>
+    <section id="tab-queue" class="tab"></section>
+    <section id="tab-settings" class="tab"></section>
+  </main>
+
+  <nav class="tabbar">
+    <button data-tab="stats" class="active"><span>📊</span>Analitika</button>
+    <button data-tab="posts"><span>📰</span>Postlar</button>
+    <button data-tab="queue"><span>🗂</span>Navbat<b id="queue-badge" hidden></b></button>
+    <button data-tab="settings"><span>⚙️</span>Sozlamalar</button>
+  </nav>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

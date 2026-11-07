@@ -9,7 +9,7 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
-from app.bot.keyboards import MenuCB, main_menu
+from app.bot.keyboards import MenuCB, start_keyboard
 from app.bot.middlewares import AdminFilter
 from app.content.formatting import escape
 from app.context import AppContext
@@ -106,8 +106,26 @@ async def logs_text(ctx: AppContext) -> str:
     return "\n".join(lines)
 
 
+async def start_text(ctx: AppContext) -> str:
+    mode = {"auto": "⚡ avtomatik", "semi_auto": "✋ tasdiq bilan", "manual": "🖐 qoʻlda"}.get(
+        await ctx.runtime.publish_mode(), ""
+    )
+    where = "🧪 test kanal" if ctx.settings.dry_run else "🔴 kanal"
+    paused = " · ⏸ pauza" if await ctx.runtime.paused() else ""
+    lines = ["👋 <b>IT Dunyosi — boshqaruv</b>", f"Rejim: {mode} · {where}{paused}", ""]
+    if ctx.settings.webapp_url:
+        lines.append("Analitika, postlar, navbat va sozlamalar — <b>panelda</b> 👇")
+    else:
+        lines.append("Boʻlimni tanlang 👇 Oʻz postingiz uchun rasm/video yuboring yoki /new.")
+    return "\n".join(lines)
+
+
 async def cmd_start(message: Message, ctx: AppContext) -> None:
-    await message.answer(HELP, reply_markup=main_menu())
+    await message.answer(await start_text(ctx), reply_markup=start_keyboard(ctx.settings.webapp_url))
+
+
+async def help_text(ctx: AppContext) -> str:
+    return HELP
 
 
 async def cmd_status(message: Message, ctx: AppContext) -> None:
@@ -153,6 +171,7 @@ MENU_HANDLERS: dict[str, MenuBuilder] = {
     "status": status_text,
     "budget": budget_text,
     "logs": logs_text,
+    "help": help_text,
 }
 
 

@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     mongodb_uri: SecretStr | None = None
     mongodb_db: str = "it_dunyosi_bot"
 
+    # Mini ilova (panel): ommaviy HTTPS manzil (masalan, https://1-2-3-4.sslip.io) va ichki port
+    webapp_url: str | None = None
+    web_host: str = "0.0.0.0"
+    web_port: int = 8080
+
     # Tizim
     daily_budget_usd: float = 3.0
     log_level: str = "INFO"

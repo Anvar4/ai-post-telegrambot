@@ -140,6 +140,7 @@ async def run() -> None:
     (settings.data_path / "bot.pid").write_text(str(os.getpid()), encoding="utf-8")
     dp = build_dispatcher(ctx)
     scheduler = None
+    web_runner = None
     try:
         from app.scheduler.setup import setup_scheduler
 
@@ -154,11 +155,21 @@ async def run() -> None:
         except Exception as exc:
             logger.error("Bot ma'lumotini olib bo'lmadi (token to'g'rimi?): {}", exc)
         await _startup_checks(ctx)
+        if settings.web_port:
+            from app.web.server import setup_panel_button, start_web
+
+            try:
+                web_runner = await start_web(ctx, settings.web_host, settings.web_port)
+                await setup_panel_button(bot, settings)
+            except OSError as exc:
+                logger.error("Mini ilova serveri ishga tushmadi (port {} band?): {}", settings.web_port, exc)
         logger.info("Bot polling boshlandi")
         await dp.start_polling(bot, allowed_updates=ALLOWED_UPDATES)
     finally:
         if scheduler is not None:
             scheduler.shutdown(wait=False)
+        if web_runner is not None:
+            await web_runner.cleanup()
         if ctx.http is not None:
             await ctx.http.aclose()
         await bot.session.close()
