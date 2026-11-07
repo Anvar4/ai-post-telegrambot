@@ -9,6 +9,8 @@ services:
     environment:
       TZ: Asia/Tashkent
       DATA_DIR: /app/data
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: "8080"
     volumes:
       - ./data:/app/data
     # init: true — healthcheck bot jarayonini to'xtatganda konteyner ham to'xtaydi va qayta ishga tushadi
@@ -19,3 +21,22 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  # Mini ilova uchun HTTPS: Caddy sertifikatni oʻzi oladi va yangilaydi (80/443 portlar ochiq boʻlsin)
+  caddy:
+    image: caddy:2.8
+    container_name: it-dunyosi-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      WEBAPP_HOST: ${WEBAPP_HOST:?WEBAPP_HOST .env da kerak (masalan 203-0-113-7.sslip.io)}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - bot
+
+volumes:
+  caddy_data:
