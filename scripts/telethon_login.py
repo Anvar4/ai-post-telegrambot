@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import load_settings  # noqa: E402
+from app.config import load_settings
 
 ENV = Path(".env")
 
