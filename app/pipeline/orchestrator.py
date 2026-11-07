@@ -345,7 +345,7 @@ class Pipeline:
         text = (
             f"🖼 Post #{post.id} («{post.title_short or ''}») uchun internetdan mos rasm topilmadi — "
             "post brend muqova bilan chiqadi.\n"
-            "AI rasm kerak boʻlsa tugmani bosing (pullik, ~$0.006). Bosmasangiz AI ishlatilmaydi."
+            "AI rasm kerak boʻlsa tugmani bosing (pullik). Bosmasangiz AI ishlatilmaydi."
         )
         for admin_id in self.ctx.settings.admin_ids:
             try:
