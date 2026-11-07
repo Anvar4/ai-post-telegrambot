@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import functools
+import time
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -107,11 +110,30 @@ async def heartbeat_job(ctx: AppContext) -> None:
     touch_heartbeat(ctx.settings.data_path / "heartbeat")
 
 
+IMAGE_KEEP_DAYS = 7
+
+
+def _remove_old_images(folder: Path, keep_days: int) -> int:
+    if not folder.is_dir():
+        return 0
+    cutoff = time.time() - keep_days * 86400
+    removed = 0
+    for path in folder.glob("*.png"):
+        if path.stat().st_mtime < cutoff:
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
 @job("cleanup")
 async def cleanup_job(ctx: AppContext) -> None:
     removed = await ctx.repo.cleanup_old()
     if removed:
         logger.info("90 kundan eski {} ta yozuv o'chirildi", removed)
+    # Chiqqan postlarning muqovalari kerak emas — disk toʻlmasin
+    images = await asyncio.to_thread(_remove_old_images, ctx.settings.data_path / "images", IMAGE_KEEP_DAYS)
+    if images:
+        logger.info("{} kundan eski {} ta rasm fayli oʻchirildi", IMAGE_KEEP_DAYS, images)
 
 
 async def _call(ctx: AppContext, service: str, method: str) -> None:

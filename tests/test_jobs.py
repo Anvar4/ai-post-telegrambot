@@ -159,3 +159,22 @@ async def test_scheduler_keeps_jobs_in_memory(ctx) -> None:
 
     scheduler = await setup_scheduler(ctx)
     assert isinstance(scheduler._jobstores["default"], MemoryJobStore)
+
+
+async def test_cleanup_removes_old_image_files(ctx) -> None:
+    import os
+    import time
+
+    folder = ctx.settings.data_path / "images"
+    folder.mkdir(parents=True, exist_ok=True)
+    old, fresh = folder / "1.png", folder / "2.png"
+    old.write_bytes(b"x")
+    fresh.write_bytes(b"y")
+    ten_days = time.time() - 10 * 86400
+    os.utime(old, (ten_days, ten_days))
+    set_ctx(ctx)
+    try:
+        await jobs.cleanup_job()
+    finally:
+        set_ctx(None)
+    assert not old.exists() and fresh.exists()  # disk toʻlmasin (bepul hostingda 1 GB)
