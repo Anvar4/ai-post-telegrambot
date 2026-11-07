@@ -26,6 +26,7 @@ from tests.tg import callback_update, make_bot
 
 PEXELS = "https://api.pexels.com/v1/search"
 COMMONS = "https://commons.wikimedia.org/w/api.php"
+OPENVERSE = "https://api.openverse.org/v1/images/"
 UPLOAD = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab"
 TZ = ZoneInfo("Asia/Tashkent")
 NOW = datetime(2026, 11, 6, 8, 0, tzinfo=TZ)
@@ -83,6 +84,28 @@ def commons_payload(*files: tuple[str, str, str, int, int]) -> dict:
             ],
         }
     return {"query": {"pages": pages}}
+
+
+def openverse_payload(*items: tuple[str, str, str]) -> dict:
+    """(id, muallif, litsenziya) — Flickr fotolari."""
+    return {
+        "results": [
+            {
+                "id": oid,
+                "title": f"Photo {oid}",
+                "url": f"https://live.staticflickr.com/1/{oid}_b.jpg",
+                "creator": creator,
+                "license": lic,
+                "license_version": "2.0",
+                "license_url": f"https://creativecommons.org/licenses/{lic}/2.0/",
+                "foreign_landing_url": f"https://www.flickr.com/photos/x/{oid}",
+                "width": 1024,
+                "height": 680,
+                "source": "flickr",
+            }
+            for oid, creator, lic in items
+        ]
+    }
 
 
 async def add_post(ctx, **kw) -> int:
@@ -197,13 +220,87 @@ async def test_download_checks_host_and_quality() -> None:
 
 
 @respx.mock
-async def test_search_errors_mean_no_image(ctx) -> None:
+async def test_search_errors_fall_back_to_brand_cover(ctx) -> None:
     respx.get(PEXELS).mock(return_value=httpx.Response(500))
+    respx.get(OPENVERSE).mock(return_value=httpx.Response(429))
     respx.get(COMMONS).mock(side_effect=httpx.ConnectTimeout("timeout"))
+    img = FakeImage()
+    use_llm(ctx, image=img)
     pid = await add_post(ctx)
     async with httpx.AsyncClient() as http:
-        assert await ImageStage(ctx, search=ImageSearch(http, pexels_key="k")).make_for_post(pid) is None
-    assert (await ctx.repo.get_post(pid)).extra["image_status"] == "missing"
+        path = await ImageStage(ctx, search=ImageSearch(http, pexels_key="k")).make_for_post(pid)
+    assert path is not None and Path(path).is_file()  # noqa: ASYNC240
+    post = await ctx.repo.get_post(pid)
+    assert post.extra["image_status"] == "brand"
+    assert "image_credit" not in post.extra
+    assert img.prompts == []  # pullik AI ishlatilmadi
+
+
+@respx.mock
+async def test_openverse_result_used_and_credited(ctx) -> None:
+    respx.get(OPENVERSE).mock(
+        return_value=httpx.Response(200, json=openverse_payload(("ov1", "Ann Lee", "by-sa")))
+    )
+    respx.get("https://live.staticflickr.com/1/ov1_b.jpg").mock(
+        return_value=httpx.Response(200, content=jpeg(1024, 680))
+    )
+    pid = await add_post(ctx)
+    async with httpx.AsyncClient() as http:
+        assert await ImageStage(ctx, search=ImageSearch(http, pexels_key=None)).make_for_post(pid)
+    credit = (await ctx.repo.get_post(pid)).extra["image_credit"]
+    assert "Ann Lee" in credit and "Flickr" in credit and "CC BY-SA 2.0" in credit
+    assert "https://www.flickr.com/photos/x/ov1" in credit
+
+
+@respx.mock
+async def test_long_query_is_shortened_until_something_found(ctx) -> None:
+    def openverse(request: httpx.Request) -> httpx.Response:
+        q = request.url.params["q"]
+        return httpx.Response(
+            200, json=openverse_payload(("s1", "Bob", "cc0")) if q == "smartphone" else {"results": []}
+        )
+
+    route = respx.get(OPENVERSE).mock(side_effect=openverse)
+    respx.get(COMMONS).mock(return_value=httpx.Response(200, json={"batchcomplete": ""}))
+    respx.get("https://live.staticflickr.com/1/s1_b.jpg").mock(
+        return_value=httpx.Response(200, content=jpeg())
+    )
+    pid = await add_post(ctx, extra={"image_query": "account security smartphone"})
+    async with httpx.AsyncClient() as http:
+        assert await ImageStage(ctx, search=ImageSearch(http, pexels_key=None)).make_for_post(pid)
+    asked = [c.request.url.params["q"] for c in route.calls]
+    assert asked[0] == "account security smartphone" and asked[-1] == "smartphone"
+    assert (await ctx.repo.get_post(pid)).extra["image_status"] == "found"
+
+
+@respx.mock
+async def test_category_query_used_when_topic_finds_nothing(ctx) -> None:
+    def openverse(request: httpx.Request) -> httpx.Response:
+        found = request.url.params["q"] == "cyber security"
+        return httpx.Response(200, json=openverse_payload(("c1", "Eve", "by")) if found else {"results": []})
+
+    respx.get(OPENVERSE).mock(side_effect=openverse)
+    respx.get(COMMONS).mock(return_value=httpx.Response(200, json={"batchcomplete": ""}))
+    respx.get("https://live.staticflickr.com/1/c1_b.jpg").mock(
+        return_value=httpx.Response(200, content=jpeg())
+    )
+    pid = await add_post(ctx, kind=PostKind.ALERT, extra={"image_query": "zxqv blorp"})
+    async with httpx.AsyncClient() as http:
+        assert await ImageStage(ctx, search=ImageSearch(http, pexels_key=None)).make_for_post(pid)
+    assert "Eve" in (await ctx.repo.get_post(pid)).extra["image_credit"]
+
+
+def test_query_variants() -> None:
+    from app.images.search import query_variants
+
+    assert query_variants("account security smartphone") == [
+        "account security smartphone",
+        "account security",
+        "security smartphone",
+        "smartphone",
+    ]
+    assert query_variants("laptop") == ["laptop"]
+    assert query_variants("  ") == []
 
 
 @respx.mock
@@ -243,7 +340,9 @@ async def test_image_mode_none_skips_images(ctx) -> None:
 # ---------------------------------------------------------------- topilmasa — admin ruxsati
 
 
-async def missing_image_post(ctx, http: httpx.AsyncClient, mode: str = "auto") -> tuple[int, FakeImage]:
+async def missing_image_post(
+    ctx, http: httpx.AsyncClient, monkeypatch, mode: str = "auto"
+) -> tuple[int, FakeImage]:
     llms = make_llms(ctx)
     img = FakeImage()
     use_llm(ctx, writer=llms["writer"], editor=llms["editor"], fast=llms["fast"], image=img)
@@ -256,22 +355,29 @@ async def missing_image_post(ctx, http: httpx.AsyncClient, mode: str = "auto") -
         ctx.repo, ctx.sender, ctx.settings, ctx.notifier, runtime=ctx.runtime
     )
     await seed_story(ctx, now=NOW)
-    pid = await pipeline.prepare_slot("08:30", SLOT_AT)
+
+    def broken(*args, **kwargs):
+        raise ValueError("shrift yoʻq")
+
+    with monkeypatch.context() as m:  # hatto bepul brend muqova ham chizilmadi
+        m.setattr("app.pipeline.image.render_cover", broken)
+        pid = await pipeline.prepare_slot("08:30", SLOT_AT)
     assert pid is not None
     return pid, img
 
 
 def empty_search() -> respx.Route:
     respx.get(COMMONS).mock(return_value=httpx.Response(200, json={"batchcomplete": ""}))
+    respx.get(OPENVERSE).mock(return_value=httpx.Response(200, json={"results": []}))
     return respx.get(PEXELS).mock(return_value=httpx.Response(200, json={"photos": []}))
 
 
 @respx.mock
-async def test_no_image_found_asks_admin_even_in_auto(ctx) -> None:
+async def test_no_image_found_asks_admin_even_in_auto(ctx, monkeypatch) -> None:
     pexels = empty_search()
     async with httpx.AsyncClient() as http:
-        pid, img = await missing_image_post(ctx, http)
-    assert parse_qs(urlparse(str(pexels.calls.last.request.url)).query)["query"] == ["browser security"]
+        pid, img = await missing_image_post(ctx, http, monkeypatch)
+    assert parse_qs(urlparse(str(pexels.calls[0].request.url)).query)["query"] == ["browser security"]
     post = await ctx.repo.get_post(pid)
     assert post.status == PostStatus.PENDING_APPROVAL  # auto rejimda ham oʻzi chiqmaydi
     assert post.needs_approval and "rasm" in post.approval_reason.lower()
@@ -284,10 +390,10 @@ async def test_no_image_found_asks_admin_even_in_auto(ctx) -> None:
 
 
 @respx.mock
-async def test_ai_image_button_generates_and_schedules(ctx) -> None:
+async def test_ai_image_button_generates_and_schedules(ctx, monkeypatch) -> None:
     empty_search()
     async with httpx.AsyncClient() as http:
-        pid, img = await missing_image_post(ctx, http)
+        pid, img = await missing_image_post(ctx, http, monkeypatch)
         dp, bot = build_dispatcher(ctx), make_bot()
         await dp.feed_update(bot, callback_update(ApprovalCB(action="aiimg", post_id=pid).pack(), ADMIN))
     post = await ctx.repo.get_post(pid)
@@ -298,10 +404,10 @@ async def test_ai_image_button_generates_and_schedules(ctx) -> None:
 
 
 @respx.mock
-async def test_ai_image_in_semi_auto_returns_for_approval(ctx) -> None:
+async def test_ai_image_in_semi_auto_returns_for_approval(ctx, monkeypatch) -> None:
     empty_search()
     async with httpx.AsyncClient() as http:
-        pid, img = await missing_image_post(ctx, http, mode="semi_auto")
+        pid, img = await missing_image_post(ctx, http, monkeypatch, mode="semi_auto")
         sent_before = len(ctx.sender.sent)
         dp, bot = build_dispatcher(ctx), make_bot()
         await dp.feed_update(bot, callback_update(ApprovalCB(action="aiimg", post_id=pid).pack(), ADMIN))
@@ -315,10 +421,10 @@ async def test_ai_image_in_semi_auto_returns_for_approval(ctx) -> None:
 
 
 @respx.mock
-async def test_no_image_button_schedules_text_only(ctx) -> None:
+async def test_no_image_button_schedules_text_only(ctx, monkeypatch) -> None:
     empty_search()
     async with httpx.AsyncClient() as http:
-        pid, img = await missing_image_post(ctx, http)
+        pid, img = await missing_image_post(ctx, http, monkeypatch)
         dp, bot = build_dispatcher(ctx), make_bot()
         await dp.feed_update(bot, callback_update(ApprovalCB(action="noimg", post_id=pid).pack(), ADMIN))
     post = await ctx.repo.get_post(pid)
@@ -333,10 +439,10 @@ async def test_no_image_button_schedules_text_only(ctx) -> None:
 
 
 @respx.mock
-async def test_ai_image_double_click_generates_once(ctx) -> None:
+async def test_ai_image_double_click_generates_once(ctx, monkeypatch) -> None:
     empty_search()
     async with httpx.AsyncClient() as http:
-        pid, img = await missing_image_post(ctx, http, mode="semi_auto")
+        pid, img = await missing_image_post(ctx, http, monkeypatch, mode="semi_auto")
         pipeline = ctx.services["pipeline"]
         await pipeline.use_ai_image(pid)
         again = await pipeline.use_ai_image(pid)  # ikkinchi bosish — pul ikki marta sarflanmaydi
@@ -345,10 +451,10 @@ async def test_ai_image_double_click_generates_once(ctx) -> None:
 
 
 @respx.mock
-async def test_ai_image_failure_restores_choice(ctx) -> None:
+async def test_ai_image_failure_restores_choice(ctx, monkeypatch) -> None:
     empty_search()
     async with httpx.AsyncClient() as http:
-        pid, _img = await missing_image_post(ctx, http)
+        pid, _img = await missing_image_post(ctx, http, monkeypatch)
 
         async def boom(*args, **kwargs):
             raise OSError("disk full")
@@ -380,21 +486,20 @@ async def test_cover_render_failure_counts_as_missing(ctx, monkeypatch) -> None:
 
 
 @respx.mock
-async def test_found_photo_uses_lenient_photo_review(ctx) -> None:
+async def test_found_photo_needs_no_ai_review(ctx) -> None:
     from tests.fakes import ScriptedLLM
 
     respx.get(PEXELS).mock(return_value=httpx.Response(200, json=pexels_payload((11, "Jane"))))
     respx.get("https://images.pexels.com/photos/11/a.jpeg").mock(
         return_value=httpx.Response(200, content=jpeg())
     )
-    editor = ScriptedLLM(script=['{"ok": true, "reason": "mos"}'])
+    editor = ScriptedLLM(script=[])
     use_llm(ctx, editor=editor)
+    await ctx.runtime.set("image_review", True)
     pid = await add_post(ctx)
     async with httpx.AsyncClient() as http:
         assert await ImageStage(ctx, search=ImageSearch(http, pexels_key="k")).make_for_post(pid) is not None
-    system = editor.calls[0][0].content
-    assert "fotosurat" in system  # fotolar uchun alohida prompt
-    assert "logotip" not in system  # real fotodagi yozuv/logotip sabab rad etilmaydi
+    assert editor.calls == []  # qidiruv AIsiz ishlaydi
 
 
 @respx.mock
@@ -412,3 +517,21 @@ async def test_download_retries_once_on_rate_limit() -> None:
     async with httpx.AsyncClient() as http:
         assert await ImageSearch(http, pexels_key=None, sleep=no_sleep).download(cand) is not None
     assert route.call_count == 2
+
+
+@respx.mock
+async def test_auto_post_without_photo_gets_brand_cover_and_is_scheduled(ctx) -> None:
+    empty_search()
+    llms = make_llms(ctx)
+    img = FakeImage()
+    use_llm(ctx, writer=llms["writer"], editor=llms["editor"], fast=llms["fast"], image=img)
+    await ctx.runtime.set("publish_mode", "auto")
+    async with httpx.AsyncClient() as http:
+        ctx.services["images"] = ImageStage(ctx, search=ImageSearch(http, pexels_key="pk"))
+        pipeline = Pipeline(ctx, clock=lambda: NOW.astimezone(UTC))
+        await seed_story(ctx, now=NOW)
+        pid = await pipeline.prepare_slot("08:30", SLOT_AT)
+    post = await ctx.repo.get_post(pid)
+    assert post.status == PostStatus.SCHEDULED
+    assert post.image_path and post.extra["image_status"] == "brand"
+    assert img.prompts == []

@@ -25,6 +25,23 @@ NO_IMAGE_KINDS = frozenset({PostKind.POLL, PostKind.QUIZ})
 REVIEW_MAX_SIDE = 768
 QUERY_WORDS = 5
 IMAGE_MODES = ("search_then_ask", "ai", "none")
+# Mavzu boʻyicha hech narsa topilmasa — turkum boʻyicha umumiy fotobank soʻrovi
+CATEGORY_QUERIES = {
+    "kiber": "cyber security",
+    "ai": "artificial intelligence",
+    "yangilik": "technology",
+    "ilova": "software app",
+    "sayt": "website laptop",
+}
+KIND_QUERIES = {
+    PostKind.ALERT: "cyber security",
+    PostKind.TOOL: "software app",
+    PostKind.SITE: "website laptop",
+    PostKind.TIP: "smartphone",
+    PostKind.DIGEST: "technology",
+    PostKind.NEWS: "technology",
+}
+KEEP_STATUSES = ("found", "ai", "brand")
 
 
 def _thumbnail(data: bytes) -> bytes:
@@ -41,6 +58,13 @@ def search_query(post: Post) -> str:
     if not query:
         query = " ".join((post.image_prompt or "").replace(",", " ").split()[:QUERY_WORDS])
     return query
+
+
+def fallback_query(post: Post) -> str:
+    category = str((post.extra or {}).get("category") or "")
+    if category in CATEGORY_QUERIES:
+        return CATEGORY_QUERIES[category]
+    return KIND_QUERIES.get(PostKind(post.kind), "technology")
 
 
 class ImageStage:
@@ -84,26 +108,27 @@ class ImageStage:
         status = extra.get("image_status")
         if not fresh:
             # Qayta yozishda rasm qarori saqlanadi (yana soʻralmaydi, pul sarflanmaydi)
-            if status in ("found", "ai") and post.image_path:
+            if status in KEEP_STATUSES and post.image_path:
                 return post.image_path
             if status == "none":
                 return None
         seen = list(extra.get("image_seen", []))
         query = search_query(post)
-        topic = post.image_prompt or query
-        review = await self.ctx.runtime.get("image_review") and self.ctx.router.has("editor")
-
-        async def accept(data: bytes) -> bool:
-            # Fotolar uchun yumshoqroq tekshiruv: real fotodagi yozuv/logotip sabab rad etilmaydi
-            return await self._review_ok(data, topic, "photo_review") if review else True
-
         found = None
-        if self.search is not None and query:
-            found = await self.search.find(query, exclude=seen, accept=accept)
+        if self.search is not None:
+            # AIsiz: litsenziya va oʻlcham tekshiruvi yetarli (vision tekshiruv fotolarni koʻp rad etardi)
+            found = await self.search.find(query, fallback=fallback_query(post), exclude=seen)
         cover = await self._cover(found.data, post) if found is not None else None
         if found is None or cover is None:
-            if post.image_path and extra.get("image_status") in ("found", "ai"):
+            if post.image_path and extra.get("image_status") in KEEP_STATUSES:
                 return None  # boshqa mos rasm yoʻq — oldingisi qoladi
+            brand = await self._cover(None, post)  # bepul brend muqova (AIsiz)
+            if brand is not None:
+                path = await self._save(post.id, brand)  # type: ignore[arg-type]
+                extra["image_status"] = "brand"
+                extra.pop("image_credit", None)
+                await self.ctx.repo.posts.update(post.id, {"image_path": path, "extra": extra})  # type: ignore[arg-type]
+                return path
             extra["image_status"] = "missing"
             await self.ctx.repo.posts.update(post.id, {"image_path": None, "extra": extra})  # type: ignore[arg-type]
             return None
@@ -116,7 +141,7 @@ class ImageStage:
         await self.ctx.repo.posts.update(post.id, {"image_path": path, "extra": extra})  # type: ignore[arg-type]
         return path
 
-    async def _cover(self, base: bytes, post: Post) -> bytes | None:
+    async def _cover(self, base: bytes | None, post: Post) -> bytes | None:
         try:
             return await asyncio.to_thread(
                 render_cover,

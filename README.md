@@ -29,8 +29,8 @@ Manbalar (RSS, CISA KEV, NVD, Hacker News, GitHub, UZCERT…) ── har 30 daqi
    → gpt-6-luna: mavzuga oidmi?  → gpt-6-sol: 0–100 ball, kategoriya, shoshilinchmi?
    → 1-model (yozuvchi): oʻzbekcha post
    → gpt-6-sol: fakt-tekshiruv (kerak boʻlsa 2 martagacha tuzatish)
-   → rasm: Pexels / Wikimedia dan bepul rasm (litsenziya va sifat tekshiruvi) + brend shabloni;
-     topilmasa — sizdan soʻraydi: 🎨 AI rasm (pullik) / 📝 rasmsiz / ❌
+   → rasm (AIsiz, bepul): Pexels / Openverse (Flickr) / Wikimedia — litsenziya va oʻlcham tekshiruvi,
+     soʻrov qisqartirib va turkum boʻyicha qayta qidiriladi; baribir topilmasa — brend muqova
    → semi_auto: qoralama sizga tugmalar bilan keladi | auto: oʻzi chiqadi
    → nashrdan keyin postga "📤 Ulashish" tugmasi qoʻshiladi
 ```
@@ -199,7 +199,7 @@ Har bir qoralama sizga quyidagi koʻrinishda keladi: rasm, post matni, muharrir 
 | 🖼 Boshqa rasm | Qidiruvdagi keyingi bepul rasmni oladi (AI rejimida — yangisini chizadi) |
 | ❌ Rad etish | Postni bekor qiladi |
 
-**Bepul rasm topilmasa** post `auto` rejimda ham oʻzi chiqmaydi — sizga shu tugmalar bilan keladi:
+**Rasm qidirish AIsiz ishlaydi**: avval mavzu soʻzlari, keyin qisqaroq soʻrov, keyin turkum (masalan, "cyber security") boʻyicha qidiriladi. Hech narsa topilmasa post brend muqova (sarlavha yozilgan fon) bilan chiqadi. Faqat brend muqova ham chizilmasa, post sizga shu tugmalar bilan keladi:
 
 | Tugma | Nima qiladi |
 |---|---|
@@ -207,7 +207,7 @@ Har bir qoralama sizga quyidagi koʻrinishda keladi: rasm, post matni, muharrir 
 | 📝 Rasmsiz chiqarish | Post rasmsiz, oʻz vaqtida (yoki keyingi boʻsh slotda) chiqadi |
 | ✏️ Tahrirlash, ❌ Rad etish | Odatdagidek |
 
-Rasm faqat ruxsat etilgan litsenziyalardan olinadi: Pexels, Wikimedia da CC0, Public domain, CC BY va CC BY-SA (NC/ND yoʻq). Maqola va saytlardagi rasmlar olinmaydi. Muallif va litsenziya postning oxirida koʻrsatiladi. Rasm rejimini `/settings` dan oʻzgartirish mumkin: qidirish → topilmasa soʻrash (standart), doim AI, rasmsiz.
+Rasm faqat ruxsat etilgan litsenziyalardan olinadi: Pexels, Openverse va Wikimedia da CC0, Public domain, CC BY va CC BY-SA (NC/ND yoʻq). Maqola va saytlardagi rasmlar olinmaydi. Muallif va litsenziya postning oxirida koʻrsatiladi. Rasm rejimini `/settings` dan oʻzgartirish mumkin: qidirish → topilmasa soʻrash (standart), doim AI, rasmsiz.
 
 ### Qoʻlda post (oʻzingizning postingiz)
 
