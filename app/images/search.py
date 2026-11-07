@@ -29,7 +29,8 @@ MIN_WIDTH, MIN_HEIGHT = 800, 450
 MIN_RATIO, MAX_RATIO = 0.6, 2.4
 MAX_BYTES = 8_000_000
 PER_SOURCE = 10
-MAX_DOWNLOADS = 4
+MAX_DOWNLOADS = 6
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 _CC_RE = re.compile(r"^cc[ -]by(?:-sa)?[ -]\d")
@@ -87,9 +88,16 @@ def _verify_image(data: bytes) -> bool:
 
 
 class ImageSearch:
-    def __init__(self, http: httpx.AsyncClient, *, pexels_key: str | None) -> None:
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        *,
+        pexels_key: str | None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
         self.http = http
         self.pexels_key = pexels_key
+        self._sleep = sleep
 
     async def candidates(self, query: str) -> list[Candidate]:
         """Avval Pexels (kalit boʻlsa), soʻng Wikimedia; tarmoq xatosi — shu manba boʻsh."""
@@ -177,9 +185,12 @@ class ImageSearch:
             return None
         try:
             resp = await self.http.get(cand.url)
+            if resp.status_code in RETRY_STATUSES:  # Wikimedia tez-tez soʻralganda 429 qaytaradi
+                await self._sleep(1.5)
+                resp = await self.http.get(cand.url)
             resp.raise_for_status()
         except Exception as exc:
-            logger.debug("Rasm yuklanmadi {}: {}", cand.url, exc)
+            logger.info("Rasm yuklanmadi {}: {}", cand.url, exc)
             return None
         data = resp.content
         if not data or len(data) > MAX_BYTES:

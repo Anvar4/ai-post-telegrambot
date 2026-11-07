@@ -377,3 +377,38 @@ async def test_cover_render_failure_counts_as_missing(ctx, monkeypatch) -> None:
     async with httpx.AsyncClient() as http:
         assert await ImageStage(ctx, search=ImageSearch(http, pexels_key="k")).make_for_post(pid) is None
     assert (await ctx.repo.get_post(pid)).extra["image_status"] == "missing"  # admin soʻraladi
+
+
+@respx.mock
+async def test_found_photo_uses_lenient_photo_review(ctx) -> None:
+    from tests.fakes import ScriptedLLM
+
+    respx.get(PEXELS).mock(return_value=httpx.Response(200, json=pexels_payload((11, "Jane"))))
+    respx.get("https://images.pexels.com/photos/11/a.jpeg").mock(
+        return_value=httpx.Response(200, content=jpeg())
+    )
+    editor = ScriptedLLM(script=['{"ok": true, "reason": "mos"}'])
+    use_llm(ctx, editor=editor)
+    pid = await add_post(ctx)
+    async with httpx.AsyncClient() as http:
+        assert await ImageStage(ctx, search=ImageSearch(http, pexels_key="k")).make_for_post(pid) is not None
+    system = editor.calls[0][0].content
+    assert "fotosurat" in system  # fotolar uchun alohida prompt
+    assert "logotip" not in system  # real fotodagi yozuv/logotip sabab rad etilmaydi
+
+
+@respx.mock
+async def test_download_retries_once_on_rate_limit() -> None:
+    route = respx.get("https://upload.wikimedia.org/x/big.jpg").mock(
+        side_effect=[httpx.Response(429), httpx.Response(200, content=jpeg())]
+    )
+    cand = Candidate(
+        "wikimedia", "w:1", "https://upload.wikimedia.org/x/big.jpg", "Ali", "https://c", "CC0", None
+    )
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    async with httpx.AsyncClient() as http:
+        assert await ImageSearch(http, pexels_key=None, sleep=no_sleep).download(cand) is not None
+    assert route.call_count == 2

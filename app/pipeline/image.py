@@ -94,7 +94,8 @@ class ImageStage:
         review = await self.ctx.runtime.get("image_review") and self.ctx.router.has("editor")
 
         async def accept(data: bytes) -> bool:
-            return await self._review_ok(data, topic) if review else True
+            # Fotolar uchun yumshoqroq tekshiruv: real fotodagi yozuv/logotip sabab rad etilmaydi
+            return await self._review_ok(data, topic, "photo_review") if review else True
 
         found = None
         if self.search is not None and query:
@@ -154,13 +155,13 @@ class ImageStage:
             logger.error("Brend rasm ham chizilmadi — post rasmsiz chiqadi: {}", exc)
             return None
 
-    async def _review_ok(self, image: bytes, topic: str) -> bool:
+    async def _review_ok(self, image: bytes, topic: str, prompt: str = "image_review") -> bool:
         try:
             thumb = await asyncio.to_thread(_thumbnail, image)
             res = await self.ctx.router.complete(
                 "editor",
                 [
-                    Message("system", load_prompt("image_review", topic=topic)),
+                    Message("system", load_prompt(prompt, topic=topic)),
                     Message("user", "Rasmni baholang.", images=[thumb]),
                 ],
                 schema=ImageReview,

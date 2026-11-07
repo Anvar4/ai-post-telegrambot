@@ -89,7 +89,7 @@ async def test_poll_and_quiz_counters(ctx) -> None:
 
 
 async def test_time_toggle_reschedules_slot_jobs(ctx) -> None:
-    scheduler = await setup_scheduler(ctx, persistent=False)
+    scheduler = await setup_scheduler(ctx)
     dp, bot = dispatcher(ctx)
     await dp.feed_update(bot, msg_update("/settings", ADMIN))
     await press(dp, bot, "Vaqtlar")

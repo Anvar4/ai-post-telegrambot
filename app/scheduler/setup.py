@@ -59,23 +59,15 @@ async def schedule_slots(ctx: AppContext, scheduler: AsyncIOScheduler) -> None:
     )
 
 
-async def setup_scheduler(ctx: AppContext, *, persistent: bool = True) -> AsyncIOScheduler:
-    tz = ZoneInfo(ctx.settings.tz)
-    jobstore: Any
-    if persistent:
-        from apscheduler.jobstores.mongodb import MongoDBJobStore
-        from pymongo import MongoClient
+async def setup_scheduler(ctx: AppContext) -> AsyncIOScheduler:
+    """Vazifalar xotirada: har ishga tushishda sozlamalardan qayta quriladi.
 
-        uri = ctx.settings.mongodb_uri.get_secret_value() if ctx.settings.mongodb_uri else ""
-        jobstore = MongoDBJobStore(
-            database=ctx.settings.mongodb_db,
-            collection="apscheduler_jobs",
-            client=MongoClient(uri, serverSelectionTimeoutMS=20_000),
-        )
-    else:
-        jobstore = MemoryJobStore()
+    Bazadagi job store (MongoDBJobStore) tarmoq uzilganda APScheduler'ni jimgina toʻxtatib qoʻyardi;
+    postlar holati baribir MongoDB da (publish_due har daqiqa tekshiradi), shuning uchun yoʻqotish yoʻq.
+    """
+    tz = ZoneInfo(ctx.settings.tz)
     scheduler = AsyncIOScheduler(
-        jobstores={"default": jobstore},
+        jobstores={"default": MemoryJobStore()},
         timezone=tz,
         job_defaults={"coalesce": True, "misfire_grace_time": 900, "max_instances": 1},
     )

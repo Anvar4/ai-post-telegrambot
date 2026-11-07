@@ -14,7 +14,7 @@ TZ = ZoneInfo("Asia/Tashkent")
 
 
 async def test_scheduler_registers_all_jobs(ctx) -> None:
-    scheduler = await setup_scheduler(ctx, persistent=False)
+    scheduler = await setup_scheduler(ctx)
     ids = {j.id for j in scheduler.get_jobs()}
     assert {
         "collect",
@@ -36,7 +36,7 @@ async def test_scheduler_registers_all_jobs(ctx) -> None:
 
 
 async def test_slot_prepare_time_is_45_min_before(ctx) -> None:
-    scheduler = await setup_scheduler(ctx, persistent=False)
+    scheduler = await setup_scheduler(ctx)
     trig = str(scheduler.get_job("slot_0830").trigger)
     assert "hour='7'" in trig and "minute='45'" in trig
     evening = str(scheduler.get_job("slot_1930").trigger)
@@ -47,7 +47,7 @@ async def test_slot_prepare_time_is_45_min_before(ctx) -> None:
 
 async def test_custom_slot_time_from_runtime(ctx) -> None:
     await ctx.runtime.set("slot_times", ["09:10", "13:00", "19:30"])
-    scheduler = await setup_scheduler(ctx, persistent=False)
+    scheduler = await setup_scheduler(ctx)
     trig = str(scheduler.get_job("slot_0910").trigger)
     assert "hour='8'" in trig and "minute='25'" in trig
     assert scheduler.get_job("slot_0830") is None
@@ -56,7 +56,7 @@ async def test_custom_slot_time_from_runtime(ctx) -> None:
 async def test_reschedule_drops_removed_times(ctx) -> None:
     from app.scheduler.setup import schedule_slots
 
-    scheduler = await setup_scheduler(ctx, persistent=False)
+    scheduler = await setup_scheduler(ctx)
     await ctx.runtime.set("slot_times", ["08:30", "10:00"])
     await schedule_slots(ctx, scheduler)
     ids = {j.id for j in scheduler.get_jobs() if j.id.startswith("slot_")}
@@ -71,7 +71,7 @@ async def test_stale_slot_job_removes_itself(ctx) -> None:
         async def prepare_slot(self, slot_time, scheduled_at):
             self.calls.append(slot_time)
 
-    scheduler = await setup_scheduler(ctx, persistent=False)
+    scheduler = await setup_scheduler(ctx)
     scheduler.add_job(
         f"{jobs.__name__}:slot_job", "interval", minutes=60, args=["morning"], id="slot_morning"
     )
@@ -151,3 +151,11 @@ async def test_digest_skipped_with_too_few_posts(ctx) -> None:
     now = datetime(2026, 11, 8, 19, 15, tzinfo=TZ)
     p = Pipeline(ctx, clock=lambda: now.astimezone(UTC))
     assert await p.prepare_digest(datetime(2026, 11, 8, 20, 0, tzinfo=TZ)) is None
+
+
+async def test_scheduler_keeps_jobs_in_memory(ctx) -> None:
+    # Vazifalar sozlamalardan qayta quriladi; MongoDB uzilsa rejalashtiruvchi toʻxtamasligi kerak
+    from apscheduler.jobstores.memory import MemoryJobStore
+
+    scheduler = await setup_scheduler(ctx)
+    assert isinstance(scheduler._jobstores["default"], MemoryJobStore)
