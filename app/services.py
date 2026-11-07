@@ -31,7 +31,11 @@ def register_services(ctx: AppContext) -> None:
     pipeline = Pipeline(ctx)
     ctx.services["pipeline"] = pipeline
     ctx.services["selector"] = pipeline.selector
-    search = ImageSearch(ctx.http, pexels_key=_secret(s.pexels_api_key)) if ctx.http is not None else None
+    search = (
+        ImageSearch(ctx.http, pexels_key=_secret(s.pexels_api_key), pixabay_key=_secret(s.pixabay_api_key))
+        if ctx.http is not None
+        else None
+    )
     ctx.services["images"] = ImageStage(ctx, search=search)
     ctx.services["polls"] = PollService(ctx)
     ctx.services["quizzes"] = QuizService(ctx)

@@ -535,3 +535,108 @@ async def test_auto_post_without_photo_gets_brand_cover_and_is_scheduled(ctx) ->
     assert post.status == PostStatus.SCHEDULED
     assert post.image_path and post.extra["image_status"] == "brand"
     assert img.prompts == []
+
+
+@respx.mock
+async def test_no_photo_notifies_admin_with_ai_button_and_never_generates(ctx) -> None:
+    empty_search()
+    llms = make_llms(ctx)
+    img = FakeImage()
+    use_llm(ctx, writer=llms["writer"], editor=llms["editor"], fast=llms["fast"], image=img)
+    await ctx.runtime.set("publish_mode", "auto")
+    await ctx.runtime.set("image_mode", "ai")  # eski sozlama ham AI ni oʻzi ishlatmaydi
+    async with httpx.AsyncClient() as http:
+        ctx.services["images"] = ImageStage(ctx, search=ImageSearch(http, pexels_key="pk"))
+        pipeline = Pipeline(ctx, clock=lambda: NOW.astimezone(UTC))
+        ctx.services["pipeline"] = pipeline
+        await seed_story(ctx, now=NOW)
+        pid = await pipeline.prepare_slot("08:30", SLOT_AT)
+    assert img.prompts == []
+    post = await ctx.repo.get_post(pid)
+    assert post.status == PostStatus.SCHEDULED and post.extra["image_status"] == "brand"
+    asks = [s for s in ctx.sender.sent if s.kwargs.get("reply_markup") is not None and s.chat_id == ADMIN]
+    texts = [b.text for row in asks[-1].kwargs["reply_markup"].inline_keyboard for b in row]
+    assert any("AI rasm" in t for t in texts)
+    assert "rasm topilmadi" in asks[-1].text.lower()
+
+
+@respx.mock
+async def test_ai_button_on_scheduled_brand_post_replaces_cover(ctx) -> None:
+    empty_search()
+    llms = make_llms(ctx)
+    img = FakeImage()
+    use_llm(ctx, writer=llms["writer"], editor=llms["editor"], fast=llms["fast"], image=img)
+    await ctx.runtime.set("publish_mode", "auto")
+    async with httpx.AsyncClient() as http:
+        ctx.services["images"] = ImageStage(ctx, search=ImageSearch(http, pexels_key="pk"))
+        pipeline = Pipeline(ctx, clock=lambda: NOW.astimezone(UTC))
+        ctx.services["pipeline"] = pipeline
+        await seed_story(ctx, now=NOW)
+        pid = await pipeline.prepare_slot("08:30", SLOT_AT)
+        result = await pipeline.use_ai_image(pid)
+        again = await pipeline.use_ai_image(pid)
+    post = await ctx.repo.get_post(pid)
+    assert len(img.prompts) == 1 and "allaqachon" in again
+    assert post.status == PostStatus.SCHEDULED and post.extra["image_status"] == "ai"
+    assert "🎨" in result
+
+
+async def test_download_rejects_private_addresses() -> None:
+    async def resolver(host: str) -> list[str]:
+        return {"internal.example": ["10.0.0.5"], "cdn.stocksnap.io": ["104.18.1.1"]}.get(host, [])
+
+    def cand(url: str) -> Candidate:
+        return Candidate("openverse", url, url, "Ali", "https://p", "CC0", None)
+
+    with respx.mock:
+        ok = respx.get("https://cdn.stocksnap.io/a.jpg").mock(
+            return_value=httpx.Response(200, content=jpeg())
+        )
+        bad = respx.get("https://internal.example/a.jpg").mock(
+            return_value=httpx.Response(200, content=jpeg())
+        )
+        async with httpx.AsyncClient() as http:
+            s = ImageSearch(http, pexels_key=None, resolver=resolver)
+            assert await s.download(cand("https://internal.example/a.jpg")) is None  # ichki tarmoq
+            assert await s.download(cand("http://cdn.stocksnap.io/a.jpg")) is None  # faqat https
+            assert await s.download(cand("https://cdn.stocksnap.io/a.jpg")) is not None  # istalgan ochiq sayt
+    assert ok.called and not bad.called
+
+
+@respx.mock
+async def test_pixabay_used_when_key_given(ctx) -> None:
+    from app.images.search import PIXABAY_URL
+
+    route = respx.get(PIXABAY_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "hits": [
+                    {
+                        "id": 77,
+                        "pageURL": "https://pixabay.com/photos/x-77/",
+                        "largeImageURL": "https://pixabay.com/get/abc_1280.jpg",
+                        "imageWidth": 4000,
+                        "imageHeight": 2600,
+                        "user": "Zed",
+                    }
+                ]
+            },
+        )
+    )
+    respx.get("https://pixabay.com/get/abc_1280.jpg").mock(return_value=httpx.Response(200, content=jpeg()))
+    pid = await add_post(ctx)
+    async with httpx.AsyncClient() as http:
+        search = ImageSearch(http, pexels_key=None, pixabay_key="px-key")
+        assert await ImageStage(ctx, search=search).make_for_post(pid)
+    assert route.calls.last.request.url.params["key"] == "px-key"
+    credit = (await ctx.repo.get_post(pid)).extra["image_credit"]
+    assert "Zed" in credit and "Pixabay" in credit
+
+
+@respx.mock
+async def test_wikimedia_asks_standard_thumbnail_width() -> None:
+    route = respx.get(COMMONS).mock(return_value=httpx.Response(200, json={"batchcomplete": ""}))
+    async with httpx.AsyncClient() as http:
+        await ImageSearch(http, pexels_key=None)._wikimedia("server")
+    assert route.calls.last.request.url.params["iiurlwidth"] == "1280"  # nostandart oʻlcham 429 beradi

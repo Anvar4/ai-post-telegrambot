@@ -97,7 +97,7 @@ def _build_image(s: Settings, http: httpx.AsyncClient | None, problems: list[str
     if provider == "openai":
         from app.ai.images.openai_img import OpenAIImageClient
 
-        return OpenAIImageClient(key, s.image_model or "gpt-image-2")
+        return OpenAIImageClient(key, s.image_model or "gpt-image-2", quality=s.image_quality or None)
     if provider == "gemini":
         from app.ai.images.gemini_img import GeminiImageClient
 

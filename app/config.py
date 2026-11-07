@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     image_model: str | None = None
     image_api_key: SecretStr | None = None
     image_size: str = "1024x1024"
+    image_quality: str = "low"  # OpenAI: low | medium | high (low — eng arzon)
 
     # 3-kalit: OpenAI muharrir
     openai_api_key: SecretStr | None = None
@@ -83,8 +84,9 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     producthunt_token: SecretStr | None = None
 
-    # Rasm qidirish
+    # Rasm qidirish (bepul kalitlar, ixtiyoriy — qoʻshilsa rasm koʻproq topiladi)
     pexels_api_key: SecretStr | None = None
+    pixabay_api_key: SecretStr | None = None
 
     # Maʼlumotlar bazasi (MongoDB)
     mongodb_uri: SecretStr | None = None
@@ -181,6 +183,7 @@ class Settings(BaseSettings):
             self.hash_salt,
             self.mongodb_uri,
             self.pexels_api_key,
+            self.pixabay_api_key,
             self.tg_api_hash,
             self.tg_session,
         ]

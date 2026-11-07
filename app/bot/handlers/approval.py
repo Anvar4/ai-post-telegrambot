@@ -25,7 +25,7 @@ ALLOWED_FROM: dict[str, frozenset[PostStatus]] = {
     "rewrite": frozenset({S.PENDING_APPROVAL, S.SCHEDULED}),
     "img": frozenset({S.PENDING_APPROVAL, S.SCHEDULED}),
     "rej": frozenset({S.PENDING_APPROVAL, S.SCHEDULED, S.FAILED}),
-    "aiimg": frozenset({S.PENDING_APPROVAL}),
+    "aiimg": frozenset({S.PENDING_APPROVAL, S.SCHEDULED}),
     "noimg": frozenset({S.PENDING_APPROVAL}),
 }
 

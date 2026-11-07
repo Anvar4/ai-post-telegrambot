@@ -294,3 +294,18 @@ async def test_gemini_client_marks_max_tokens_truncation() -> None:
 
     client = GeminiClient("k", "gemini-x", http_client=mock_http(handler))
     assert (await client.complete([Message("user", "u")])).truncated is True
+
+
+async def test_openai_image_sends_low_quality_to_save_money() -> None:
+    png = b"\x89PNGfake"
+    seen = {}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.update(json.loads(request.content))
+        return httpx2.Response(
+            200, json={"created": 1, "data": [{"b64_json": base64.b64encode(png).decode()}]}
+        )
+
+    client = OpenAIImageClient("sk-test", "gpt-image-2", quality="low", http_client=mock_http(handler))
+    assert await client.generate("tech") == png
+    assert seen["quality"] == "low"

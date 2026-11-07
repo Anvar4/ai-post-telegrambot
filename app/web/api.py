@@ -34,8 +34,7 @@ STATUS_UZ = {
     "EXPIRED": "Eskirgan",
 }
 IMAGE_MODE_UZ = {
-    "search_then_ask": "Internetdan qidirish (bepul)",
-    "ai": "Doim AI rasm (pullik)",
+    "search_then_ask": "Internetdan qidirish (bepul). Topilmasa — AI uchun sizdan ruxsat soʻraladi",
     "none": "Rasmsiz",
 }
 PUBLISH_MODE_UZ = {

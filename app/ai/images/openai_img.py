@@ -15,15 +15,25 @@ _SIZES = {"1:1": "1024x1024", "16:9": "1536x1024", "9:16": "1024x1536"}
 class OpenAIImageClient:
     provider = "openai"
 
-    def __init__(self, api_key: str, model: str, *, http_client: Any = None, timeout: float = 180.0) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        *,
+        quality: str | None = None,
+        http_client: Any = None,
+        timeout: float = 180.0,
+    ) -> None:
         from openai import AsyncOpenAI
 
         self.model = model
+        self.quality = quality  # low — eng arzon (~$0.006/rasm)
         self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, max_retries=0, timeout=timeout)
 
     async def generate(self, prompt: str, *, size: str = "1024x1024") -> bytes:
+        extra: dict[str, Any] = {"quality": self.quality} if self.quality else {}
         resp = await self._client.images.generate(
-            model=self.model, prompt=prompt, size=_SIZES[aspect_ratio(size)], n=1
+            model=self.model, prompt=prompt, size=_SIZES[aspect_ratio(size)], n=1, **extra
         )
         item = resp.data[0] if resp.data else None
         if item is None:

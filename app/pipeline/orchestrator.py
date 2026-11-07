@@ -322,15 +322,36 @@ class Pipeline:
             logger.warning("Post #{} uchun rasm tayyorlanmadi: {}", post_id, exc)
 
     async def _image_gate(self, post_id: int) -> None:
-        """Bepul rasm topilmadi: post auto rejimda ham admin qaroriga keladi (AI rasm — pullik)."""
+        """Internetdan rasm topilmadi: brend muqova bilan davom etadi va adminga AI ruxsati soʻraladi.
+
+        Brend muqova ham chizilmasa (`missing`) — post auto rejimda ham admin qaroriga keladi.
+        """
         post = await self.repo.posts.get(post_id)
-        if post is None or (post.extra or {}).get("image_status") != "missing":
+        status = (post.extra or {}).get("image_status") if post is not None else None
+        if post is not None and status == "brand":
+            await self._ask_ai_image(post)
+            return
+        if post is None or status != "missing":
             return
         post.extra = {**post.extra, "image_gate": not post.needs_approval}
         post.needs_approval = True
         if IMAGE_MISSING_REASON not in (post.approval_reason or ""):
             post.approval_reason = "; ".join(filter(None, [post.approval_reason, IMAGE_MISSING_REASON]))
         await self.repo.posts.save(post)
+
+    async def _ask_ai_image(self, post: Post) -> None:
+        from app.bot.keyboards import ai_image_keyboard
+
+        text = (
+            f"🖼 Post #{post.id} («{post.title_short or ''}») uchun internetdan mos rasm topilmadi — "
+            "post brend muqova bilan chiqadi.\n"
+            "AI rasm kerak boʻlsa tugmani bosing (pullik, ~$0.006). Bosmasangiz AI ishlatilmaydi."
+        )
+        for admin_id in self.ctx.settings.admin_ids:
+            try:
+                await self.ctx.sender.send_message(admin_id, text, reply_markup=ai_image_keyboard(post.id))  # type: ignore[arg-type]
+            except Exception as exc:
+                logger.warning("AI rasm soʻrovi yuborilmadi ({}): {}", admin_id, exc)
 
     async def _schedule_now_or_slot(self, post: Post, actor: str, **details: Any) -> datetime:
         """Kelajakdagi vaqti saqlanadi, aks holda keyingi boʻsh slot; post SCHEDULED boʻladi."""
@@ -350,12 +371,17 @@ class Pipeline:
     async def use_ai_image(self, post_id: int) -> str:
         """Admin ruxsati bilan AI rasm: auto rejimda (boshqa sabab boʻlmasa) rejaga, aks holda tasdiqqa."""
         # Atomik: tugma ikki marta bosilsa ham pullik rasm bir marta yaratiladi
+        before = await self.repo.posts.get(post_id)
+        previous = (before.extra or {}).get("image_status") if before is not None else None
         if not await self.repo.posts.cas(
             post_id,
-            {"status": S.PENDING_APPROVAL, "extra.image_status": "missing"},
+            {
+                "status": {"$in": [S.PENDING_APPROVAL.value, S.SCHEDULED.value]},
+                "extra.image_status": {"$in": ["missing", "brand"]},
+            },
             {"extra.image_status": "generating"},
         ):
-            return "⏳ Rasm allaqachon tayyorlangan yoki tayyorlanmoqda"
+            return "⏳ Rasm allaqachon tayyorlangan yoki tayyorlanmoqda (yoki post chiqib boʻlgan)"
         images = self.ctx.services.get("images")
         try:
             path = await images.make_for_post(post_id, force_ai=True) if images is not None else None
@@ -363,11 +389,18 @@ class Pipeline:
             logger.warning("Post #{} uchun AI rasm yaratilmadi: {}", post_id, mask_secrets(str(exc)))
             path = None
         post = await self.repo.posts.get(post_id)
-        if post is None or post.status != S.PENDING_APPROVAL:
-            return "Post topilmadi yoki holati oʻzgargan"
         if path is None:
-            await self.repo.posts.update(post_id, {"extra.image_status": "missing"})
+            await self.repo.posts.update(post_id, {"extra.image_status": previous or "missing"})
             return "❌ AI rasm yaratilmadi — /logs ni koʻring"
+        if post is None or post.status not in (S.PENDING_APPROVAL, S.SCHEDULED):
+            return "Post topilmadi yoki holati oʻzgargan"
+        if post.status == S.SCHEDULED:
+            when = to_tz(post.scheduled_at, self.ctx.settings.tz) if post.scheduled_at else None
+            return (
+                f"🎨 Rasm tayyor — post {when:%d.%m %H:%M} da shu rasm bilan chiqadi"
+                if when
+                else "🎨 Rasm tayyor"
+            )
         self._drop_image_reason(post)
         auto = await self.ctx.runtime.publish_mode() == "auto"
         if auto and (post.extra or {}).get("image_gate") and post.created_by == "ai":

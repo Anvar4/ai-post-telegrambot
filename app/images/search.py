@@ -8,6 +8,7 @@ Uzun soʻrov natija bermasa qisqartiriladi, oxirida turkum boʻyicha umumiy soʻ
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import re
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -24,18 +25,21 @@ from app.content.formatting import escape, html_to_text
 PEXELS_URL = "https://api.pexels.com/v1/search"
 COMMONS_URL = "https://commons.wikimedia.org/w/api.php"
 OPENVERSE_URL = "https://api.openverse.org/v1/images/"
+PIXABAY_URL = "https://pixabay.com/api/"
+PIXABAY_LICENSE_URL = "https://pixabay.com/service/license-summary/"
 PEXELS_LICENSE_URL = "https://www.pexels.com/license/"
-# Yuklab olish faqat shu saytlardan (va ularning subdomenlaridan), faqat https
-ALLOWED_HOSTS = ("images.pexels.com", "upload.wikimedia.org", "staticflickr.com")
+# Ishonchli saytlar (DNS tekshiruvisiz); boshqa ochiq saytlar ham mumkin — faqat https va ommaviy IP
+TRUSTED_HOSTS = ("images.pexels.com", "upload.wikimedia.org", "staticflickr.com", "pixabay.com")
+MAX_REDIRECTS = 3
 OPENVERSE_LICENSES = {"cc0": "CC0", "pdm": "Public Domain Mark", "by": "CC BY", "by-sa": "CC BY-SA"}
-SITE_NAMES = {"pexels": "Pexels", "wikimedia": "Wikimedia Commons", "flickr": "Flickr"}
+SITE_NAMES = {"pexels": "Pexels", "wikimedia": "Wikimedia Commons", "flickr": "Flickr", "pixabay": "Pixabay"}
 ALLOWED_MIME = frozenset({"image/jpeg", "image/png", "image/webp"})
 MIN_WIDTH, MIN_HEIGHT = 800, 450
 MIN_RATIO, MAX_RATIO = 0.6, 2.4
 MAX_BYTES = 8_000_000
 PER_SOURCE = 10
-MAX_DOWNLOADS = 8
-PER_QUERY_DOWNLOADS = 3
+MAX_DOWNLOADS = 12
+PER_QUERY_DOWNLOADS = 4
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
@@ -64,10 +68,20 @@ def query_variants(query: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 
-def _host_ok(url: str) -> bool:
-    parsed = urlparse(url)
-    host = parsed.hostname or ""
-    return parsed.scheme == "https" and any(host == h or host.endswith("." + h) for h in ALLOWED_HOSTS)
+def _trusted(host: str) -> bool:
+    return any(host == h or host.endswith("." + h) for h in TRUSTED_HOSTS)
+
+
+def _public_ip(value: str) -> bool:
+    try:
+        return ipaddress.ip_address(value).is_global
+    except ValueError:
+        return False
+
+
+async def _resolve(host: str) -> list[str]:
+    infos = await asyncio.get_running_loop().getaddrinfo(host, 443)
+    return [str(info[4][0]) for info in infos]
 
 
 def _ratio_ok(width: int, height: int) -> bool:
@@ -94,8 +108,8 @@ class FoundImage:
     def credit_html(self) -> str:
         c = self.candidate
         who = f'<a href="{escape(c.page_url)}">{escape(c.author)}</a>'
-        if c.source == "pexels":
-            return f"📷 {who} / Pexels"
+        if c.source in ("pexels", "pixabay"):
+            return f"📷 {who} / {SITE_NAMES[c.source]}"
         lic = escape(c.license)
         if c.license_url:
             lic = f'<a href="{escape(c.license_url)}">{lic}</a>'
@@ -118,19 +132,57 @@ class ImageSearch:
         http: httpx.AsyncClient,
         *,
         pexels_key: str | None,
+        pixabay_key: str | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        resolver: Callable[[str], Awaitable[list[str]]] = _resolve,
     ) -> None:
         self.http = http
         self.pexels_key = pexels_key
+        self.pixabay_key = pixabay_key
         self._sleep = sleep
+        self._resolve = resolver
 
     async def candidates(self, query: str) -> list[Candidate]:
-        """Pexels (kalit boʻlsa) → Openverse → Wikimedia; tarmoq xatosi — shu manba boʻsh."""
-        out: list[Candidate] = []
+        """Pexels, Pixabay (kalit boʻlsa) → Openverse → Wikimedia, parallel; xato — shu manba boʻsh."""
+        sources = [self._openverse, self._wikimedia]
+        if self.pixabay_key:
+            sources.insert(0, self._pixabay)
         if self.pexels_key:
-            out += await self._safe(self._pexels, query)
-        out += await self._safe(self._openverse, query)
-        out += await self._safe(self._wikimedia, query)
+            sources.insert(0, self._pexels)
+        results = await asyncio.gather(*(self._safe(fn, query) for fn in sources))
+        return [cand for group in results for cand in group]
+
+    async def _pixabay(self, query: str) -> list[Candidate]:
+        resp = await self.http.get(
+            PIXABAY_URL,
+            params={
+                "key": self.pixabay_key or "",
+                "q": query,
+                "image_type": "photo",
+                "orientation": "horizontal",
+                "safesearch": "true",
+                "per_page": PER_SOURCE,
+                "min_width": MIN_WIDTH,
+            },
+        )
+        resp.raise_for_status()
+        out = []
+        for hit in resp.json().get("hits", []):
+            url = hit.get("largeImageURL")
+            if not url or not _ratio_ok(int(hit.get("imageWidth", 0)), int(hit.get("imageHeight", 0))):
+                continue
+            out.append(
+                Candidate(
+                    source="pixabay",
+                    source_id=f"pixabay:{hit.get('id')}",
+                    url=str(url),
+                    author=str(hit.get("user") or "Pixabay")[:80],
+                    page_url=str(hit.get("pageURL") or "https://pixabay.com"),
+                    license="Pixabay",
+                    license_url=PIXABAY_LICENSE_URL,
+                    site="pixabay",
+                )
+            )
         return out
 
     async def _safe(self, fn: Callable[[str], Awaitable[list[Candidate]]], query: str) -> list[Candidate]:
@@ -191,7 +243,7 @@ class ImageSearch:
             url = str(item.get("url") or "")
             if (
                 not license_ok(lic)
-                or not _host_ok(url)
+                or not url.startswith("https://")
                 or (width and height and not _ratio_ok(width, height))
             ):
                 continue
@@ -221,7 +273,7 @@ class ImageSearch:
                 "gsrlimit": PER_SOURCE,
                 "prop": "imageinfo",
                 "iiprop": "url|size|mime|extmetadata",
-                "iiurlwidth": 1600,
+                "iiurlwidth": 1280,  # standart oʻlcham (nostandart — 429)
             },
         )
         resp.raise_for_status()
@@ -249,15 +301,41 @@ class ImageSearch:
             )
         return out
 
-    async def download(self, cand: Candidate) -> bytes | None:
-        """Faqat ruxsat etilgan saytdan, ≤ 8 MB, haqiqiy rasm va yetarli oʻlchamda."""
-        if not _host_ok(cand.url):
-            return None
+    async def _url_ok(self, url: str) -> bool:
+        """Faqat https; ishonchli saytlardan tashqarisi — ommaviy IP (ichki tarmoqqa soʻrov yuborilmaydi)."""
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        if parsed.scheme != "https" or not host:
+            return False
+        if _trusted(host):
+            return True
         try:
-            resp = await self.http.get(cand.url)
-            if resp.status_code in RETRY_STATUSES:  # Wikimedia tez-tez soʻralganda 429 qaytaradi
+            ips = await self._resolve(host)
+        except Exception:
+            return False
+        return bool(ips) and all(_public_ip(ip) for ip in ips)
+
+    async def _get(self, url: str) -> httpx.Response | None:
+        """Yoʻnaltirishlarni (redirect) har birini tekshirib kuzatadi; 429/5xx da bir marta qayta urinadi."""
+        for _ in range(MAX_REDIRECTS + 1):
+            if not await self._url_ok(url):
+                return None
+            resp = await self.http.get(url, follow_redirects=False)
+            if resp.status_code in RETRY_STATUSES:
                 await self._sleep(1.5)
-                resp = await self.http.get(cand.url)
+                resp = await self.http.get(url, follow_redirects=False)
+            if resp.is_redirect and resp.headers.get("location"):
+                url = str(resp.url.join(resp.headers["location"]))
+                continue
+            return resp
+        return None
+
+    async def download(self, cand: Candidate) -> bytes | None:
+        """Ochiq https sayt, ≤ 8 MB, haqiqiy rasm va yetarli oʻlchamda."""
+        try:
+            resp = await self._get(cand.url)
+            if resp is None:
+                return None
             resp.raise_for_status()
         except Exception as exc:
             logger.info("Rasm yuklanmadi {}: {}", cand.url, exc)
@@ -280,18 +358,17 @@ class ImageSearch:
         tried = 0
         queries = query_variants(query) + ([fallback] if fallback else [])
         for q in dict.fromkeys(queries):
-            per_query = 0
-            for cand in await self.candidates(q):
-                if cand.source_id in skip:
-                    continue
-                skip.add(cand.source_id)
+            fresh = [c for c in await self.candidates(q) if c.source_id not in skip]
+            batch = fresh[: min(PER_QUERY_DOWNLOADS, MAX_DOWNLOADS - tried)]
+            if not batch:
                 if tried >= MAX_DOWNLOADS:
-                    return None
-                if per_query >= PER_QUERY_DOWNLOADS:
                     break
-                tried += 1
-                per_query += 1
-                data = await self.download(cand)
+                continue
+            skip.update(c.source_id for c in batch)
+            tried += len(batch)
+            # Bir nechtasini parallel yuklab, birinchi muvofiqini (tartib boʻyicha) olamiz
+            datas = await asyncio.gather(*(self.download(c) for c in batch))
+            for cand, data in zip(batch, datas, strict=True):
                 if data is None:
                     continue
                 if accept is not None and not await accept(data):

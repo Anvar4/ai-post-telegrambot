@@ -24,8 +24,7 @@ from app.pipeline.image import IMAGE_MODES
 
 WEEKLY_MAX = 7
 IMAGE_MODE_UZ = {
-    "search_then_ask": "qidirish → topilmasa soʻrash",
-    "ai": "doim AI (pullik)",
+    "search_then_ask": "internetdan (bepul)",
     "none": "rasmsiz",
 }
 

@@ -131,6 +131,14 @@ def share_keyboard(link: str, text: str = "") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[button]])
 
 
+def ai_image_keyboard(post_id: int) -> InlineKeyboardMarkup:
+    """Rasm topilmaganda adminga: pullik AI rasmga ruxsat."""
+    data = ApprovalCB(action="aiimg", post_id=post_id).pack()
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🎨 AI rasm yaratish (pullik)", callback_data=data)]]
+    )
+
+
 def ban_keyboard(chat_id: int, user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
