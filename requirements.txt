@@ -14,3 +14,4 @@ loguru>=0.7
 openai>=1.40
 aiohttp>=3.9
 telethon>=1.40
+tzdata>=2024.1
