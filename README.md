@@ -157,6 +157,20 @@ Ishga tushganda bot MongoDB dagi `MONGODB_DB` (standart `it_dunyosi_bot`) bazasi
 
 ---
 
+## 5.1. Render'ga bepul joylashtirish
+
+1. MongoDB Atlas → **Network Access** → `0.0.0.0/0` (Render IP manzillari oʻzgarib turadi). Parol kuchli boʻlsin.
+2. [dashboard.render.com](https://dashboard.render.com) → **New → Blueprint** → shu GitHub repo. `render.yaml` hammasini sozlaydi.
+3. Render soʻragan sir qiymatlarni `.env` dan nusxalang (token, kalitlar, `MONGODB_URI`, `HASH_SALT`, `ADMIN_IDS`, `CHANNEL_ID`…).
+4. Deploy tugagach manzil chiqadi: `https://<nom>.onrender.com`. Panel shu manzilda avtomatik ishlaydi (`RENDER_EXTERNAL_URL`).
+5. **Uxlab qolmaslik:** bot har 10 daqiqada oʻz `/health` manziliga soʻrov yuboradi (`KEEPALIVE_MINUTES=10`).
+   Zaxira: GitHub → repo → Settings → Secrets and variables → Actions → **Variables** → `RENDER_URL` = Render manzili.
+   Shunda `.github/workflows/keepalive.yml` ham har 10 daqiqada tashqaridan uradi.
+6. **Muhim:** bot bir vaqtda faqat bitta joyda ishlasin — Render ishga tushgach kompyuterdagi botni oʻchiring.
+
+Bepul tarif: 512 MB RAM, oyiga 750 soat (bitta servis uchun yetadi), disk vaqtinchalik (rasmlar va zaxira nusxalar
+qayta ishga tushganda oʻchadi — maʼlumotlar MongoDB da saqlanadi).
+
 ## 6. Serverga oʻrnatish (Docker)
 
 1 vCPU va 1–2 GB RAM li VPS yetadi (Ubuntu 22.04/24.04).
