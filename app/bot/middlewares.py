@@ -9,6 +9,7 @@ from aiogram.types import ErrorEvent
 from loguru import logger
 
 from app.context import AppContext
+from app.utils.neterrors import is_transient
 from app.utils.security import mask_secrets
 
 
@@ -28,6 +29,9 @@ class NotAdminFilter(Filter):
 
 async def on_error(event: ErrorEvent, ctx: AppContext) -> bool:
     exc = event.exception
+    if is_transient(exc):  # internet uzilishi — xato emas, adminga xabar kerak emas
+        logger.warning("Handler: aloqa uzildi — {}: {}", type(exc).__name__, mask_secrets(str(exc))[:200])
+        return True
     text = mask_secrets(f"{type(exc).__name__}: {exc}")
     logger.opt(exception=exc).error("Handler xatosi: {}", text)
     try:

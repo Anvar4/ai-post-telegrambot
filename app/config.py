@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 PublishMode = Literal["auto", "semi_auto", "manual"]
@@ -47,6 +47,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_ignore_empty=True,
         extra="ignore",
+        populate_by_name=True,
     )
 
     # Telegram
@@ -93,9 +94,14 @@ class Settings(BaseSettings):
     mongodb_db: str = "it_dunyosi_bot"
 
     # Mini ilova (panel): ommaviy HTTPS manzil (masalan, https://1-2-3-4.sslip.io) va ichki port
-    webapp_url: str | None = None
+    # Render oʻzi beradi: PORT va RENDER_EXTERNAL_URL (https://<nom>.onrender.com)
+    webapp_url: str | None = Field(
+        default=None, validation_alias=AliasChoices("WEBAPP_URL", "RENDER_EXTERNAL_URL")
+    )
     web_host: str = "0.0.0.0"
-    web_port: int = 8080
+    web_port: int = Field(default=8080, validation_alias=AliasChoices("PORT", "WEB_PORT"))
+    # Bepul hosting uxlab qolmasligi uchun oʻz /health manziliga har N daqiqada soʻrov (0 — oʻchiq)
+    keepalive_minutes: int = 0
 
     # Telethon (adminning Telegram akkaunti): post koʻrishlari va kanal statistikasi
     tg_api_id: int | None = None

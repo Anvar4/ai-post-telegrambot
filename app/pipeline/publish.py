@@ -15,6 +15,7 @@ from app.content.templates import SHARE_CTA, telegram_post_link
 from app.db.models import Post
 from app.pipeline.compose import compose
 from app.pipeline.state import PostKind, PostStatus, transition
+from app.utils.neterrors import is_transient
 from app.utils.security import mask_secrets
 from app.utils.timeutil import utcnow
 
@@ -165,6 +166,11 @@ class Publisher:
         logger.warning("Post #{} yuborilmadi: {}", post_id, err)
         post = await self.repo.posts.get(post_id)
         assert post is not None
+        if first_id is None and is_transient(exc):
+            # Internet/Telegram vaqtincha ishlamayapti — urinish hisoblanmaydi, post navbatda qoladi
+            await transition(self.repo, post, PostStatus.SCHEDULED, "publisher", retry="network", error=err)
+            await self.repo.posts.save(post)
+            return False
         post.attempts += 1
         if first_id is not None:
             # Birinchi xabar ketdi — takror yubormaymiz (dublikat bo'lmasin)

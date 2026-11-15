@@ -39,6 +39,11 @@ def _auth_middleware(ctx: AppContext) -> Any:
     return middleware
 
 
+async def health(request: web.Request) -> web.Response:
+    """Hosting va keep-alive uchun: imzosiz, bazaga murojaat qilmaydi."""
+    return web.json_response({"ok": True})
+
+
 async def index(request: web.Request) -> web.FileResponse:
     return web.FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
@@ -47,6 +52,7 @@ def build_web_app(ctx: AppContext) -> web.Application:
     app = web.Application(middlewares=[_auth_middleware(ctx)])
     app[api.CTX_KEY] = ctx
     app.router.add_get("/", index)
+    app.router.add_get("/health", health)
     app.router.add_static("/static", STATIC)
     app.router.add_get("/api/overview", api.overview)
     app.router.add_get("/api/posts", api.posts)

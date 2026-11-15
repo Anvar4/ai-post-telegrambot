@@ -81,6 +81,10 @@ async def setup_scheduler(ctx: AppContext) -> AsyncIOScheduler:
     await schedule_slots(ctx, scheduler)
     add("publish_due_job", IntervalTrigger(minutes=1, timezone=tz), "publish_due")
     add("expire_job", IntervalTrigger(minutes=10, timezone=tz), "expire")
+    if ctx.settings.keepalive_minutes > 0 and ctx.settings.webapp_url:
+        add(
+            "keepalive_job", IntervalTrigger(minutes=ctx.settings.keepalive_minutes, timezone=tz), "keepalive"
+        )
     add("heartbeat_job", IntervalTrigger(minutes=1, timezone=tz), "heartbeat", next_run_time=soon)
     add("cleanup_job", CronTrigger(hour=3, minute=30, timezone=tz), "cleanup")
     add("backup_job", CronTrigger(hour=3, minute=0, timezone=tz), "backup")

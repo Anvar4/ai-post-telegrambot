@@ -146,7 +146,7 @@ async def test_member_updates_for_other_chats_ignored(ctx) -> None:
 
 async def test_daily_report_contains_numbers(ctx) -> None:
     svc = services(ctx)
-    await add_published(ctx, title="Chrome yangilandi", hours_ago=1)
+    await add_published(ctx, title="Chrome yangilandi", hours_ago=0)  # yarim tundan keyin ham "bugun"
     await svc["metrics"].on_reaction_count(-1001, 500, [("👍", 7)])
     ctx.sender.members = 1500
     await svc["metrics"].snapshot()

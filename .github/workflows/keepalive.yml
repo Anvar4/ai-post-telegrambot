@@ -1,0 +1,25 @@
+# Render bepul serveri 15 daqiqa soʻrov boʻlmasa uxlaydi — har 10 daqiqada /health ga soʻrov.
+# Sozlash: GitHub → repo → Settings → Secrets and variables → Actions → Variables → RENDER_URL
+# (masalan https://it-dunyosi-bot.onrender.com). Bot oʻzi ham oʻziga soʻrov yuboradi; bu — zaxira.
+name: Render keep-alive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping /health
+        env:
+          URL: ${{ vars.RENDER_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "RENDER_URL oʻzgaruvchisi qoʻyilmagan — oʻtkazib yuborildi"
+            exit 0
+          fi
+          # Uxlab qolgan server 30–60 soniyada uygʻonadi
+          curl -fsS --max-time 90 --retry 3 --retry-delay 10 "${URL%/}/health"

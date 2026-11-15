@@ -15,12 +15,18 @@ from loguru import logger
 
 from app.content.schedule import slot_datetime
 from app.context import AppContext, get_ctx
+from app.utils.neterrors import is_transient
+from app.utils.outage import get_tracker
 from app.utils.security import mask_secrets
 from app.utils.timeutil import to_tz, utcnow
 
 
 def job(name: str) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[None]]]:
-    """Vazifa xatosini ushlaydi: log + audit + adminga (soatiga 1 marta)."""
+    """Vazifa xatosini ushlaydi: log + audit + adminga (soatiga 1 marta).
+
+    Tarmoq uzilishi (internet, DNS, MongoDB, Telegram) xato hisoblanmaydi: jim kuzatiladi,
+    uzoq davom etsa bitta ogohlantirish va tiklanganda bitta xabar.
+    """
 
     def deco(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[None]]:
         @functools.wraps(fn)
@@ -29,6 +35,9 @@ def job(name: str) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Aw
             try:
                 await fn(ctx, *args)
             except Exception as exc:
+                if is_transient(exc):
+                    await get_tracker(ctx).failure(ctx, name, exc)
+                    return
                 text = mask_secrets(f"{type(exc).__name__}: {exc}")
                 logger.opt(exception=exc).error("Vazifa {} xatosi: {}", name, text)
                 try:
@@ -36,6 +45,8 @@ def job(name: str) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Aw
                     await ctx.notifier.notify(f"❗️ '{name}' vazifasida xato: {text[:400]}", key=f"job:{name}")
                 except Exception:
                     logger.exception("Vazifa xatosini qayd etib bo'lmadi")
+            else:
+                await get_tracker(ctx).success(ctx)
 
         return wrapper
 
@@ -101,6 +112,22 @@ async def digest_job(ctx: AppContext) -> None:
     digest = await ctx.runtime.get("digest")
     today = to_tz(utcnow(), ctx.settings.tz).date()
     await pipeline.prepare_digest(slot_datetime(today, digest["time"], ctx.settings.tz))
+
+
+@job("keepalive")
+async def keepalive_job(ctx: AppContext) -> None:
+    """Bepul server (Render) 15 daqiqa soʻrov boʻlmasa uxlaydi — oʻz manzilimizga soʻrov yuboramiz."""
+    url = (ctx.settings.webapp_url or "").rstrip("/")
+    if not url:
+        return
+    if ctx.http is not None:
+        resp = await ctx.http.get(f"{url}/health", timeout=20)
+    else:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=20) as http:
+            resp = await http.get(f"{url}/health")
+    logger.debug("Keep-alive: {} → {}", url, resp.status_code)
 
 
 @job("heartbeat")

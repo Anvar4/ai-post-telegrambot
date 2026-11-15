@@ -1,0 +1,74 @@
+# Render Blueprint: dashboard.render.com → New → Blueprint → shu repo.
+# Bepul web service 15 daqiqa soʻrov boʻlmasa uxlaydi: bot oʻziga /health soʻrov yuboradi (KEEPALIVE_MINUTES),
+# zaxira sifatida .github/workflows/keepalive.yml har 10 daqiqada tashqaridan uradi.
+# PORT va RENDER_EXTERNAL_URL ni Render oʻzi beradi — panel (mini ilova) shu https manzilda ochiladi.
+services:
+  - type: web
+    name: it-dunyosi-bot
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.11
+      - key: KEEPALIVE_MINUTES
+        value: "10"
+      - key: TZ
+        value: Asia/Tashkent
+      - key: DRY_RUN
+        value: "false"
+      - key: PUBLISH_MODE
+        value: auto
+      - key: MONGODB_DB
+        value: it_dunyosi_bot
+      - key: LLM_MAIN_PROVIDER
+        value: deepseek
+      - key: LLM_MAIN_MODEL
+        value: deepseek-flash
+      - key: IMAGE_PROVIDER
+        value: openai
+      - key: IMAGE_MODEL
+        value: gpt-image-2
+      - key: IMAGE_QUALITY
+        value: high
+      - key: OPENAI_EDITOR_MODEL
+        value: gpt-6-sol
+      - key: OPENAI_FAST_MODEL
+        value: gpt-6-luna
+      # Quyidagilar sir — Render yaratishda soʻraydi (qiymatlarni .env dan nusxalang)
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: CHANNEL_ID
+        sync: false
+      - key: CHANNEL_USERNAME
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: DISCUSSION_GROUP_ID
+        sync: false
+      - key: TEST_CHANNEL_ID
+        sync: false
+      - key: LLM_MAIN_API_KEY
+        sync: false
+      - key: IMAGE_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: HASH_SALT
+        sync: false
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: PIXABAY_API_KEY
+        sync: false
+      - key: TG_API_ID
+        sync: false
+      - key: TG_API_HASH
+        sync: false
+      - key: TG_SESSION
+        sync: false
