@@ -36,7 +36,8 @@ def register_services(ctx: AppContext) -> None:
         if ctx.http is not None
         else None
     )
-    ctx.services["images"] = ImageStage(ctx, search=search)
+    images = ImageStage(ctx, search=search)
+    ctx.services["images"] = images
     ctx.services["polls"] = PollService(ctx)
     ctx.services["quizzes"] = QuizService(ctx)
     ctx.services["qa"] = QAService(ctx)
@@ -46,7 +47,9 @@ def register_services(ctx: AppContext) -> None:
     ctx.services["reports"] = ReportService(ctx)
     ctx.services["growth"] = GrowthService(ctx)
     ctx.services["backup"] = BackupService(ctx)
-    ctx.services["publisher"] = Publisher(ctx.repo, ctx.sender, s, ctx.notifier, runtime=ctx.runtime)
+    ctx.services["publisher"] = Publisher(
+        ctx.repo, ctx.sender, s, ctx.notifier, runtime=ctx.runtime, restore_image=images.make_for_post
+    )
     if s.telethon_ready:
         from app.analytics.channel_stats import ChannelStatsService, TelethonStatsSource
 

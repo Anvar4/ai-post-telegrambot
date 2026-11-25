@@ -14,6 +14,7 @@ from app.content.limits import CAPTION_LIMIT
 from app.content.templates import SHARE_CTA, telegram_post_link
 from app.db.models import Post
 from app.pipeline.compose import compose
+from app.pipeline.image import image_file_ok
 from app.pipeline.state import PostKind, PostStatus, transition
 from app.utils.neterrors import is_transient
 from app.utils.security import mask_secrets
@@ -42,6 +43,7 @@ class Publisher:
         *,
         runtime: Runtime | None = None,
         on_published: Callable[[int], Awaitable[None]] | None = None,
+        restore_image: Callable[[int], Awaitable[str | None]] | None = None,
     ) -> None:
         self.repo = repo
         self.sender = sender
@@ -49,6 +51,7 @@ class Publisher:
         self.notifier = notifier
         self.runtime = runtime
         self.on_published = on_published
+        self.restore_image = restore_image
 
     async def publish(self, post_id: int) -> bool:
         chat_id = self.settings.target_chat_id
@@ -65,6 +68,13 @@ class Publisher:
             return True
         if post.status != PostStatus.SCHEDULED:
             return False
+        if post.image_path and not image_file_ok(post.image_path) and self.restore_image is not None:
+            # Hosting (Railway/Render) deploy'da diskni tozalaydi — rasm qayta topiladi (bepul qidiruv)
+            try:
+                await self.restore_image(post_id)
+            except Exception as exc:
+                logger.warning("Post #{} rasmini tiklab boʻlmadi: {}", post_id, exc)
+            post = await self.repo.posts.get(post_id) or post
         # Atomik: faqat bitta jarayon SCHEDULED -> PUBLISHING o'tkaza oladi (ikki marta chiqmaydi)
         if not await self.repo.posts.cas(
             post_id, {"status": PostStatus.SCHEDULED}, {"status": PostStatus.PUBLISHING, "chat_id": chat_id}

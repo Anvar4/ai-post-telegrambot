@@ -206,3 +206,30 @@ async def test_concurrent_publish_sends_once(ctx) -> None:
     assert len(ctx.sender.sent) == 1
     assert results.count(True) >= 1
     assert (await ctx.repo.get_post(pid)).status == PostStatus.PUBLISHED
+
+
+async def test_missing_image_is_restored_before_publish(ctx, tmp_path: Path) -> None:
+    """Deploy diskni tozalagan: rasm nashrdan oldin qayta topiladi va rasmli post chiqadi."""
+    pid = await add_post(ctx, image_path="/deploy-dan-oldin/1.png")
+    restored = tmp_path / "1.png"
+    calls: list[int] = []
+
+    async def restore(post_id: int) -> str:
+        calls.append(post_id)
+        restored.write_bytes(PNG)
+        await ctx.repo.posts.update(post_id, {"image_path": str(restored)})
+        return str(restored)
+
+    await publisher(ctx, restore_image=restore).publish(pid)
+    assert calls == [pid]
+    assert [s.method for s in ctx.sender.sent] == ["photo"]
+
+
+async def test_image_restore_failure_still_publishes_text(ctx) -> None:
+    pid = await add_post(ctx, image_path="/nope/missing.png")
+
+    async def broken(post_id: int) -> str:
+        raise RuntimeError("qidiruv ishlamadi")
+
+    assert await publisher(ctx, restore_image=broken).publish(pid)
+    assert [s.method for s in ctx.sender.sent] == ["message"]

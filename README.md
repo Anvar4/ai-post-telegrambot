@@ -172,6 +172,45 @@ Ishga tushganda bot MongoDB dagi `MONGODB_DB` (standart `it_dunyosi_bot`) bazasi
 Bepul tarif: 512 MB RAM, oyiga 750 soat (bitta servis uchun yetadi), disk vaqtinchalik (rasmlar va zaxira nusxalar
 qayta ishga tushganda oʻchadi — maʼlumotlar MongoDB da saqlanadi).
 
+## 5.2. Railway'ga joylashtirish (uxlamaydi — tavsiya etiladi)
+
+Railway servisni uxlatmaydi, keep-alive kerak emas. Sozlamalar repodagi `railway.json` da:
+Dockerfile bilan quriladi, `sleepApplication: false` (hech qachon uxlamaydi), `restartPolicyType: ALWAYS`
+(toʻxtasa — darhol qayta ishga tushadi), `numReplicas: 1` va `overlapSeconds: 0` (bir vaqtda ikki bot ishlamaydi).
+
+1. MongoDB Atlas → **Network Access** → `0.0.0.0/0` (Railway IP manzillari oʻzgarib turadi). Parol kuchli boʻlsin.
+2. [railway.com](https://railway.com) → **New Project → Deploy from GitHub repo** → shu repo, branch `main`.
+3. Servis → **Variables** → **Raw Editor** → `.env` faylingiz mazmunini toʻliq joylashtiring → **Update Variables**.
+   Jonli kanal uchun `DRY_RUN=false` boʻlsin. `KEEPALIVE_MINUTES` kerak emas (0 yoki yozilmasin).
+4. Servis → **Settings → Networking → Generate Domain** — `https://<nom>.up.railway.app` manzil beriladi.
+   Panel shu manzilda avtomatik ishlaydi (`RAILWAY_PUBLIC_DOMAIN`), `WEBAPP_URL` yozish shart emas.
+5. **Settings → Serverless** (App Sleeping) **oʻchiq** boʻlsin (`railway.json` buni oʻzi oʻchiradi — tekshirib qoʻying).
+6. Deploy tugagach botga `/status` yozing. **Muhim:** Render yoki kompyuterdagi botni oʻchiring —
+   bir token bilan ikki bot ishlasa, Telegram xabarlari boʻlinib ketadi.
+
+**Rejalashtirilgan vazifalar (cron).** Railway'ning alohida Cron servislari kerak emas: bot doim ishlaydi va hamma
+vazifalarni oʻzi bajaradi (Toshkent vaqti bilan):
+
+| Vazifa | Qachon |
+|---|---|
+| Yangiliklarni yigʻish | har 30 daqiqada |
+| Baholash (saralovchi) | har 2 soatda |
+| Slot posti tayyorlash | har slotdan 45 daqiqa oldin (`/settings` dagi vaqtlar) |
+| Vaqti kelgan postni chiqarish | har daqiqada |
+| Eskirgan yangiliklarni bekor qilish | har 10 daqiqada |
+| Soʻrovnomalarni yopish | har 30 daqiqada |
+| Kanal statistikasi (Telethon) | har 30 daqiqada |
+| Koʻrishlar snapshot | 09:00, 15:00, 21:00 |
+| Kunlik hisobot | 21:30 |
+| Zaxira nusxa / tozalash | 03:00 / 03:30 |
+| Haftalik dayjest | yakshanba, 20:00 dan 45 daqiqa oldin |
+| Haftalik hisobot | dushanba 09:00 |
+| Savol-javob (FAQ) | shanba 12:00 |
+
+Deploy yoki qayta ishga tushish slot tayyorlanadigan oraliqqa (masalan 07:45–08:30) toʻgʻri kelsa, slot
+ishga tushgandan 1 daqiqa keyin tayyorlanadi — post oʻtkazib yuborilmaydi. Railway diski ham vaqtinchalik:
+rejadagi postning rasmi deploy'da oʻchsa, nashrdan oldin qayta topiladi (bepul qidiruv).
+
 ## 6. Serverga oʻrnatish (Docker)
 
 1 vCPU va 1–2 GB RAM li VPS yetadi (Ubuntu 22.04/24.04).

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from io import BytesIO
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -49,6 +50,11 @@ KIND_QUERIES = {
     PostKind.NEWS: "computer technology",
 }
 KEEP_STATUSES = ("found", "ai", "brand")
+
+
+def image_file_ok(path: str | None) -> bool:
+    """Rasm fayli diskda bormi (hosting deploy'da diskni tozalashi mumkin)."""
+    return bool(path) and Path(str(path)).is_file()
 
 
 def _thumbnail(data: bytes) -> bytes:
@@ -125,7 +131,7 @@ class ImageStage:
         status = extra.get("image_status")
         if not fresh:
             # Qayta yozishda rasm qarori saqlanadi (yana soʻralmaydi, pul sarflanmaydi)
-            if status in KEEP_STATUSES and post.image_path:
+            if status in KEEP_STATUSES and image_file_ok(post.image_path):
                 return post.image_path
             if status == "none":
                 return None
@@ -137,7 +143,7 @@ class ImageStage:
             found = await self.search.find(queries, fallback=fallback_query(post), exclude=seen)
         cover = await self._cover(found.data, post) if found is not None else None
         if found is None or cover is None:
-            if post.image_path and extra.get("image_status") in KEEP_STATUSES:
+            if extra.get("image_status") in KEEP_STATUSES and image_file_ok(post.image_path):
                 return None  # boshqa mos rasm yoʻq — oldingisi qoladi
             brand = await self._cover(None, post)  # bepul brend muqova (AIsiz)
             if brand is not None:

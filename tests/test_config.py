@@ -119,3 +119,21 @@ def test_env_duplicate_key_warning(tmp_path: Path) -> None:
     assert any("CHANNEL_ID" in w for w in warnings)
     assert all("sk-real" not in w for w in warnings)
     assert env_file_warnings(tmp_path / "missing.env") == []
+
+
+def test_railway_public_domain_becomes_https_webapp_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("WEBAPP_URL", raising=False)
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+    monkeypatch.setenv("RAILWAY_PUBLIC_DOMAIN", "it-dunyosi.up.railway.app")
+    assert load(tmp_path, "").webapp_url == "https://it-dunyosi.up.railway.app"
+
+
+def test_explicit_webapp_url_wins_and_trailing_slash_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Railway'da ikkalasi ham tizim oʻzgaruvchisi: qoʻlda yozilgan WEBAPP_URL ustun
+    monkeypatch.setenv("RAILWAY_PUBLIC_DOMAIN", "x.up.railway.app")
+    monkeypatch.setenv("WEBAPP_URL", "https://panel.example.com/")
+    assert load(tmp_path, "").webapp_url == "https://panel.example.com"

@@ -11,6 +11,7 @@ from apscheduler.jobstores.base import JobLookupError
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.context import AppContext
@@ -59,6 +60,31 @@ async def schedule_slots(ctx: AppContext, scheduler: AsyncIOScheduler) -> None:
     )
 
 
+async def catch_up_slots(ctx: AppContext, scheduler: AsyncIOScheduler, now: datetime) -> list[str]:
+    """Deploy yoki qayta ishga tushish slot tayyorlanadigan oraliqqa tushsa, uni darhol tayyorlaydi.
+
+    Vazifalar xotirada — oʻtib ketgan cron qayta ishga tushganda bajarilmaydi. Slot vaqti hali
+    kelmagan, lekin tayyorlash vaqti oʻtgan boʻlsa, bir martalik vazifa qoʻyiladi. Takror tayyorlanmaydi:
+    `prepare_slot` band slotni oʻtkazib yuboradi.
+    """
+    tz = ZoneInfo(ctx.settings.tz)
+    local = now.astimezone(tz)
+    before = int(await ctx.runtime.get("prepare_minutes_before"))
+    due: list[str] = []
+    for slot_time in await ctx.runtime.get("slot_times"):
+        at = datetime.combine(local.date(), parse_hhmm(slot_time), tzinfo=tz)
+        if at - timedelta(minutes=before) <= local < at:
+            scheduler.add_job(
+                f"{J}slot_job",
+                DateTrigger(run_date=local + timedelta(seconds=60), timezone=tz),
+                args=[slot_time],
+                id=f"catchup_{slot_job_id(slot_time)}",
+                replace_existing=True,
+            )
+            due.append(slot_time)
+    return due
+
+
 async def setup_scheduler(ctx: AppContext) -> AsyncIOScheduler:
     """Vazifalar xotirada: har ishga tushishda sozlamalardan qayta quriladi.
 
@@ -79,6 +105,7 @@ async def setup_scheduler(ctx: AppContext) -> AsyncIOScheduler:
     add("collect_job", IntervalTrigger(minutes=30, timezone=tz), "collect", next_run_time=soon)
     add("score_job", CronTrigger(hour="*/2", minute=5, timezone=tz), "score")
     await schedule_slots(ctx, scheduler)
+    await catch_up_slots(ctx, scheduler, datetime.now(tz))
     add("publish_due_job", IntervalTrigger(minutes=1, timezone=tz), "publish_due")
     add("expire_job", IntervalTrigger(minutes=10, timezone=tz), "expire")
     if ctx.settings.keepalive_minutes > 0 and ctx.settings.webapp_url:

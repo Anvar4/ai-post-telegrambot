@@ -178,3 +178,24 @@ async def test_cleanup_removes_old_image_files(ctx) -> None:
     finally:
         set_ctx(None)
     assert not old.exists() and fresh.exists()  # disk toʻlmasin (bepul hostingda 1 GB)
+
+
+async def test_catch_up_prepares_slot_inside_prepare_window(ctx) -> None:
+    """Deploy 08:00 da boʻldi: 08:30 slotining tayyorlash vaqti (07:45) oʻtgan — darhol tayyorlanadi."""
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    from app.scheduler.setup import catch_up_slots
+
+    scheduler = AsyncIOScheduler(timezone=TZ)
+    due = await catch_up_slots(ctx, scheduler, datetime(2026, 11, 6, 8, 0, tzinfo=TZ))
+    assert due == ["08:30"]
+    job = scheduler.get_job("catchup_slot_0830")
+    assert job is not None and job.args == ("08:30",)
+    # Slot vaqti oʻtgan yoki tayyorlash vaqti hali kelmagan — hech narsa
+    assert (
+        await catch_up_slots(ctx, AsyncIOScheduler(timezone=TZ), datetime(2026, 11, 6, 8, 40, tzinfo=TZ))
+        == []
+    )
+    assert (
+        await catch_up_slots(ctx, AsyncIOScheduler(timezone=TZ), datetime(2026, 11, 6, 7, 0, tzinfo=TZ)) == []
+    )

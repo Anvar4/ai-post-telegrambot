@@ -95,8 +95,10 @@ class Settings(BaseSettings):
 
     # Mini ilova (panel): ommaviy HTTPS manzil (masalan, https://1-2-3-4.sslip.io) va ichki port
     # Render oʻzi beradi: PORT va RENDER_EXTERNAL_URL (https://<nom>.onrender.com)
+    # Railway oʻzi beradi: PORT va RAILWAY_PUBLIC_DOMAIN (<nom>.up.railway.app — https:// siz)
     webapp_url: str | None = Field(
-        default=None, validation_alias=AliasChoices("WEBAPP_URL", "RENDER_EXTERNAL_URL")
+        default=None,
+        validation_alias=AliasChoices("WEBAPP_URL", "RENDER_EXTERNAL_URL", "RAILWAY_PUBLIC_DOMAIN"),
     )
     web_host: str = "0.0.0.0"
     web_port: int = Field(default=8080, validation_alias=AliasChoices("PORT", "WEB_PORT"))
@@ -124,6 +126,14 @@ class Settings(BaseSettings):
             return [int(part) for part in value.replace(";", ",").split(",") if part.strip()]
         if isinstance(value, int):
             return [value]
+        return value
+
+    @field_validator("webapp_url", mode="before")
+    @classmethod
+    def _https_url(cls, value: Any) -> Any:
+        if isinstance(value, str) and value.strip():
+            value = value.strip().rstrip("/")
+            return value if value.startswith(("http://", "https://")) else f"https://{value}"
         return value
 
     @field_validator("llm_main_provider", mode="before")
