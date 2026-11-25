@@ -13,6 +13,7 @@ from app.ai.types import Message
 from app.content.formatting import html_to_text, normalize_uz, sanitize_html, wrap_external
 from app.content.hashtags import normalize_hashtags
 from app.content.limits import POST_MAX, POST_MIN, TITLE_SHORT_LIMIT
+from app.content.schedule import CATEGORY_HASHTAG, CATEGORY_LABELS
 from app.content.templates import render_footer, template_for
 from app.pipeline.links import allowed_domains
 from app.pipeline.state import PostKind
@@ -22,6 +23,23 @@ if TYPE_CHECKING:
     from app.pipeline.check import Checker, CheckReport
 
 MAX_FIX_ROUNDS = 2
+MAX_IMAGE_QUERIES = 3
+
+
+def category_info(category: str | None) -> str:
+    """Yozuvchiga turkum: sarlavha emojisi va heshtegi shunga mos boʻladi."""
+    if category not in CATEGORY_LABELS:
+        return ""
+    return f"Turkum: {CATEGORY_LABELS[category]} (heshteg: {CATEGORY_HASHTAG[category]})."
+
+
+def clean_queries(main: str, extra: Sequence[str]) -> list[str]:
+    out: list[str] = []
+    for q in [main, *extra]:
+        q = " ".join(str(q).replace(",", " ").split()[:4]).strip()
+        if q and q.lower() not in (x.lower() for x in out):
+            out.append(q)
+    return out[:MAX_IMAGE_QUERIES]
 
 
 @dataclass
@@ -54,6 +72,7 @@ class Writer:
         instructions: str | None = None,
         previous: WriterOutput | None = None,
         issues: Sequence[dict[str, str]] | None = None,
+        category: str | None = None,
     ) -> WriteResult:
         kind = PostKind(kind)
         username = self.ctx.settings.channel_username
@@ -63,9 +82,10 @@ class Writer:
             system = load_prompt(
                 "writer",
                 kind=kind.value,
-                template=template_for(kind, username),
+                template=template_for(kind, username, category),
                 min_len=POST_MIN,
                 max_len=POST_MAX,
+                category_info=category_info(category),
             )
         material = (
             f"Sarlavha: {story_title}\nManba: {source_name or '—'}\n"
@@ -89,12 +109,14 @@ class Writer:
             max_tokens=2500,
         )
         return WriteResult(
-            output=self._finish(res.parsed, kind), fallback_used=res.fallback_used, model=res.model
+            output=self._finish(res.parsed, kind, category),
+            fallback_used=res.fallback_used,
+            model=res.model,
         )
 
-    def _finish(self, out: WriterOutput, kind: PostKind) -> WriterOutput:
+    def _finish(self, out: WriterOutput, kind: PostKind, category: str | None = None) -> WriterOutput:
         text = normalize_uz(sanitize_html(out.text_html))
-        hashtags = normalize_hashtags(out.hashtags, kind)
+        hashtags = normalize_hashtags(out.hashtags, kind, category)
         footer = render_footer(self.ctx.settings.channel_username)
         if footer and footer in text:
             text = text.replace(footer, "").rstrip()
@@ -103,12 +125,14 @@ class Writer:
         if footer:
             text = text.rstrip() + "\n" + footer
         title = normalize_uz(html_to_text(out.title_short)).strip()[:TITLE_SHORT_LIMIT].strip()
+        queries = clean_queries(out.image_query_en, out.image_queries_en)
         return WriterOutput(
             title_short=title,
             text_html=text,
             hashtags=hashtags,
             image_prompt_en=out.image_prompt_en.strip(),
-            image_query_en=out.image_query_en.strip(),
+            image_query_en=queries[0] if queries else "",
+            image_queries_en=queries,
         )
 
 
@@ -126,6 +150,8 @@ async def draft_with_checks(
     instructions: str | None = None,
     extra_allowed: Sequence[str] = (),
     max_fixes: int = MAX_FIX_ROUNDS,
+    category: str | None = None,
+    require_source: bool = True,
 ) -> DraftResult:
     """Yozadi va tekshiradi; `fix` bo'lsa ≤2 marta qayta yozadi; baribir o'tmasa — admin tasdig'iga."""
     kind = PostKind(kind)
@@ -143,6 +169,7 @@ async def draft_with_checks(
             instructions=instructions,
             previous=previous,
             issues=issues,
+            category=category,
         )
 
     w = await _write()
@@ -155,6 +182,7 @@ async def draft_with_checks(
         has_image=has_image,
         risk_flags=risk_flags,
         source_urls=[*source_urls, *extra_allowed],
+        require_source=require_source,
     )
     rounds = 0
     while report.verdict == "fix" and rounds < max_fixes:
@@ -169,6 +197,7 @@ async def draft_with_checks(
             has_image=has_image,
             risk_flags=risk_flags,
             source_urls=[*source_urls, *extra_allowed],
+            require_source=require_source,
         )
     if report.verdict == "fix":
         report.needs_approval = True

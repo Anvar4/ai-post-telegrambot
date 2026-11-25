@@ -26,3 +26,20 @@ async def test_runtime_rejects_unknown_key(ctx) -> None:
     except KeyError:
         return
     raise AssertionError("KeyError kutilgan")
+
+
+async def test_migrate_enables_new_categories_once(ctx) -> None:
+    rt = Runtime(ctx.repo, ctx.settings)
+    await rt.set("categories", ["kiber", "ai"])  # eski bazadagi tanlov
+    await rt.migrate()
+    cats = await rt.get("categories")
+    assert {"kiber", "ai", "robot", "kripto", "avto", "dasturlash", "gadjet", "kosmos"} == set(cats)
+    await rt.set("categories", ["ai"])  # admin keyin oʻchirdi
+    await rt.migrate()
+    assert await rt.get("categories") == ["ai"]
+
+
+async def test_migrate_without_saved_choice_keeps_defaults(ctx) -> None:
+    rt = Runtime(ctx.repo, ctx.settings)
+    await rt.migrate()
+    assert "robot" in await rt.get("categories") and "maslahat" in await rt.get("categories")

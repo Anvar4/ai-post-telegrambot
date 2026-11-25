@@ -20,11 +20,13 @@ ALERT = """🔴 <b>OGOHLANTIRISH: {qisqa sarlavha}</b>
 #kiberxavfsizlik #ogohlantirish
 👉 {KANAL}"""
 
-NEWS = """📰 <b>{sarlavha}</b>
+NEWS = """{EMOJI} <b>{sarlavha: aniq va qiziqarli}</b>
 
-{2–4 jumla: asosiy fakt va raqamlar}
+{1-xatboshi, 2–3 jumla: eng muhim fakt — kim, nima qildi, qachon, asosiy raqamlar}
 
-💡 <b>Bu nima uchun muhim:</b> {1–2 jumla, o'zbek foydalanuvchisi uchun}
+{2-xatboshi, 1–3 jumla: tafsilotlar yoki kontekst — qanday ishlaydi, nimasi yangi, oldingisidan farqi}
+
+💡 <b>Bu nima uchun muhim:</b> {1–2 jumla, aniq: oʻquvchiga, sohaga yoki Oʻzbekistonga qanday taʼsir qiladi}
 
 🔗 <a href="{url}">Batafsil: {manba}</a>
 #yangilik #{teg}
@@ -80,6 +82,19 @@ DIGEST = """🗓 <b>Hafta dayjesti</b>
 #dayjest
 👉 {KANAL}"""
 
+EXPLAINER = """{EMOJI} <b>{sarlavha}</b>
+
+{1–2 jumla: bu nima — oddiy tilda, misol bilan}
+
+<b>Asosiy jihatlar:</b>
+• {jihat 1}
+• {jihat 2}
+• {jihat 3}
+
+💡 <b>Nega bilish kerak:</b> {1–2 jumla}
+#bilib_oling
+👉 {KANAL}"""
+
 QA = """❓ <b>Savol-javob: {mavzu}</b>
 
 <b>S:</b> {savol 1}
@@ -99,6 +114,7 @@ TEMPLATES: dict[PostKind, str] = {
     PostKind.TIP: TIP,
     PostKind.DIGEST: DIGEST,
     PostKind.QA: QA,
+    PostKind.EXPLAINER: EXPLAINER,
 }
 
 KIND_EMOJI: dict[PostKind, str] = {
@@ -111,6 +127,7 @@ KIND_EMOJI: dict[PostKind, str] = {
     PostKind.QUIZ: "🧠",
     PostKind.DIGEST: "🗓",
     PostKind.QA: "❓",
+    PostKind.EXPLAINER: "🔍",
 }
 
 KIND_LABEL: dict[PostKind, str] = {
@@ -123,6 +140,7 @@ KIND_LABEL: dict[PostKind, str] = {
     PostKind.QUIZ: "TEST",
     PostKind.DIGEST: "DAYJEST",
     PostKind.QA: "SAVOL-JAVOB",
+    PostKind.EXPLAINER: "BILIB OLING",
 }
 
 SHARE_CTA = "📢 Foydali boʻlsa, doʻstlaringizga ulashing!"
@@ -141,6 +159,20 @@ def render_footer(username: str) -> str:
     return f"👉 {username}" if username else ""
 
 
-def template_for(kind: PostKind | str, username: str) -> str:
-    tpl = TEMPLATES.get(PostKind(kind), NEWS)
-    return tpl.replace("{KANAL}", username or "@kanal")
+def template_for(kind: PostKind | str, username: str, category: str | None = None) -> str:
+    from app.content.schedule import CATEGORY_EMOJI
+
+    kind = PostKind(kind)
+    tpl = TEMPLATES.get(kind, NEWS)
+    emoji = CATEGORY_EMOJI.get(category or "") or KIND_EMOJI.get(kind, "📰")
+    return tpl.replace("{KANAL}", username or "@kanal").replace("{EMOJI}", emoji)
+
+
+def cover_label(kind: PostKind | str, category: str | None) -> str:
+    """Muqova rasmidagi belgi: yangiliklarda turkum (ROBOTOTEXNIKA), qolganlarida post turi."""
+    from app.content.schedule import CATEGORY_COVER_LABEL
+
+    kind = PostKind(kind)
+    if kind == PostKind.NEWS and category in CATEGORY_COVER_LABEL:
+        return CATEGORY_COVER_LABEL[category]
+    return KIND_LABEL.get(kind, "")

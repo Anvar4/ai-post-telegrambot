@@ -103,9 +103,9 @@ async def test_set_command_updates_and_validates(ctx) -> None:
     await dp.feed_update(bot, msg_update("/set slot_times 09:00,25:99", ADMIN))
     assert await ctx.runtime.get("slot_times") == ["09:00", "13:00", "19:30"]
     await dp.feed_update(bot, msg_update("/set categories ai,kiber", ADMIN))
-    assert await ctx.runtime.get("categories") == ["kiber", "ai"]
+    assert await ctx.runtime.get("categories") == ["ai", "kiber"]
     await dp.feed_update(bot, msg_update("/set categories futbol", ADMIN))
-    assert await ctx.runtime.get("categories") == ["kiber", "ai"]
+    assert await ctx.runtime.get("categories") == ["ai", "kiber"]
     await dp.feed_update(bot, msg_update("/set polls_per_week 3", ADMIN))
     assert await ctx.runtime.get("polls_per_week") == 3
     await dp.feed_update(bot, msg_update("/set quizzes_per_week 9", ADMIN))

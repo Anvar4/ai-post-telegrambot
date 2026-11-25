@@ -30,6 +30,7 @@ KIND_UZ = {
     "quiz": "test",
     "digest": "dayjest",
     "qa": "savol-javob",
+    "explainer": "tushuntiruvchi post",
     "manual": "qoʻlda post",
 }
 MEDIA_UZ = {"photo": "rasm", "video": "video", "animation": "GIF"}

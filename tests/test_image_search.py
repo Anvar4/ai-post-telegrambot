@@ -75,6 +75,7 @@ def commons_payload(*files: tuple[str, str, str, int, int]) -> dict:
                     "descriptionurl": f"https://commons.wikimedia.org/wiki/File:{title}",
                     "extmetadata": {
                         "LicenseShortName": {"value": lic},
+                        "ImageDescription": {"value": "Web browser security on a laptop"},
                         "LicenseUrl": {"value": "https://creativecommons.org/licenses/by-sa/4.0"},
                         "Artist": {
                             "value": '<a href="//commons.wikimedia.org/wiki/User:Ali">Ali Valiyev</a>'
@@ -86,13 +87,14 @@ def commons_payload(*files: tuple[str, str, str, int, int]) -> dict:
     return {"query": {"pages": pages}}
 
 
-def openverse_payload(*items: tuple[str, str, str]) -> dict:
-    """(id, muallif, litsenziya) — Flickr fotolari."""
+def openverse_payload(*items: tuple[str, str, str], title: str = "Browser security smartphone") -> dict:
+    """(id, muallif, litsenziya) — Flickr fotolari; `title` — mavzuga moslik tekshiruvi uchun."""
     return {
         "results": [
             {
                 "id": oid,
-                "title": f"Photo {oid}",
+                "title": f"{title} {oid}",
+                "tags": [{"name": "cyber"}],
                 "url": f"https://live.staticflickr.com/1/{oid}_b.jpg",
                 "creator": creator,
                 "license": lic,
@@ -257,7 +259,8 @@ async def test_long_query_is_shortened_until_something_found(ctx) -> None:
     def openverse(request: httpx.Request) -> httpx.Response:
         q = request.url.params["q"]
         return httpx.Response(
-            200, json=openverse_payload(("s1", "Bob", "cc0")) if q == "smartphone" else {"results": []}
+            200,
+            json=openverse_payload(("s1", "Bob", "cc0")) if q == "security smartphone" else {"results": []},
         )
 
     route = respx.get(OPENVERSE).mock(side_effect=openverse)
@@ -269,7 +272,7 @@ async def test_long_query_is_shortened_until_something_found(ctx) -> None:
     async with httpx.AsyncClient() as http:
         assert await ImageStage(ctx, search=ImageSearch(http, pexels_key=None)).make_for_post(pid)
     asked = [c.request.url.params["q"] for c in route.calls]
-    assert asked[0] == "account security smartphone" and asked[-1] == "smartphone"
+    assert asked == ["account security smartphone", "security smartphone"]  # bitta soʻzgacha emas
     assert (await ctx.repo.get_post(pid)).extra["image_status"] == "found"
 
 
@@ -295,10 +298,9 @@ def test_query_variants() -> None:
 
     assert query_variants("account security smartphone") == [
         "account security smartphone",
-        "account security",
         "security smartphone",
-        "smartphone",
     ]
+    assert query_variants("electric car") == ["electric car"]
     assert query_variants("laptop") == ["laptop"]
     assert query_variants("  ") == []
 
@@ -640,3 +642,69 @@ async def test_wikimedia_asks_standard_thumbnail_width() -> None:
     async with httpx.AsyncClient() as http:
         await ImageSearch(http, pexels_key=None)._wikimedia("server")
     assert route.calls.last.request.url.params["iiurlwidth"] == "1280"  # nostandart oʻlcham 429 beradi
+
+
+@respx.mock
+async def test_irrelevant_open_photo_is_skipped_for_brand_cover(ctx) -> None:
+    """Openverse tasodifiy rasmi (mushuk) mavzuga mos emas — olinmaydi, brend muqova qoʻyiladi."""
+    respx.get(OPENVERSE).mock(
+        return_value=httpx.Response(200, json=openverse_payload(("cat1", "Ann", "cc0"), title="Cat on sofa"))
+    )
+    respx.get(COMMONS).mock(return_value=httpx.Response(200, json={"batchcomplete": ""}))
+    img = respx.get("https://live.staticflickr.com/1/cat1_b.jpg").mock(
+        return_value=httpx.Response(200, content=jpeg())
+    )
+    pid = await add_post(ctx, extra={"image_query": "electric car charging", "category": "avto"})
+    async with httpx.AsyncClient() as http:
+        assert await ImageStage(ctx, search=ImageSearch(http, pexels_key=None)).make_for_post(pid)
+    assert not img.called
+    assert (await ctx.repo.get_post(pid)).extra["image_status"] == "brand"
+
+
+@respx.mock
+async def test_stock_searched_for_all_queries_before_open_sources(ctx) -> None:
+    def pexels(request: httpx.Request) -> httpx.Response:
+        if request.url.params["query"] == "humanoid robot":
+            return httpx.Response(200, json=pexels_payload((21, "Robo")))
+        return httpx.Response(200, json={"photos": []})
+
+    px = respx.get(PEXELS).mock(side_effect=pexels)
+    ov = respx.get(OPENVERSE).mock(
+        return_value=httpx.Response(200, json=openverse_payload(("o9", "X", "cc0"), title="robot arm"))
+    )
+    respx.get(COMMONS).mock(return_value=httpx.Response(200, json={"batchcomplete": ""}))
+    respx.get("https://images.pexels.com/photos/21/a.jpeg").mock(
+        return_value=httpx.Response(200, content=jpeg())
+    )
+    pid = await add_post(
+        ctx,
+        extra={"image_query": "robot arm factory", "image_queries": ["humanoid robot"], "category": "robot"},
+    )
+    async with httpx.AsyncClient() as http:
+        assert await ImageStage(ctx, search=ImageSearch(http, pexels_key="k")).make_for_post(pid)
+    assert "Robo" in (await ctx.repo.get_post(pid)).extra["image_credit"]
+    assert not ov.called  # fotobankda topildi — ochiq kolleksiyalarga murojaat yoʻq
+    assert [c.request.url.params["query"] for c in px.calls][-1] == "humanoid robot"
+
+
+def test_relevance_counts_topic_words() -> None:
+    from app.images.search import relevance
+
+    def cand(text: str, source: str = "openverse") -> Candidate:
+        return Candidate(source, "id", "https://x/a.jpg", "a", "https://x", "CC0", None, text=text)
+
+    assert relevance(cand("Tesla electric cars at a charging station"), "electric car charging") == 3
+    assert relevance(cand("Cat on sofa"), "electric car charging") == 0
+    assert relevance(cand(""), "robot") == 0  # tavsifsiz ochiq rasm — ishonchsiz
+    assert relevance(cand("", source="pexels"), "robot") == 1  # fotobank qidiruvi oʻzi aniq
+    assert relevance(cand("Human connection portrait"), "humanoid robot") == 0  # human ≠ humanoid
+    assert relevance(cand("Server room"), "servers data center") >= 1
+    assert relevance(cand("anything"), "modern technology") == 1  # faqat umumiy soʻzlar
+
+
+def test_min_relevance_needs_two_words_for_long_queries() -> None:
+    from app.images.search import min_relevance
+
+    assert min_relevance("electric car charging") == 2
+    assert min_relevance("humanoid robot") == 1
+    assert min_relevance("modern technology") == 1

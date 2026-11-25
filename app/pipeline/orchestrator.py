@@ -3,25 +3,27 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from loguru import logger
 
 from app.ai.prompts import load_prompt
-from app.ai.schemas import TipTopic, WriterOutput
+from app.ai.schemas import AdminBrief, TipTopic, WriterOutput
 from app.ai.types import Message
 from app.bot.approval_view import send_for_approval
 from app.collectors.dedupe import title_similarity
 from app.collectors.extract import extract_text
-from app.content.formatting import normalize_uz, sanitize_html
-from app.content.schedule import plan_day
+from app.content.formatting import normalize_uz, sanitize_html, wrap_external
+from app.content.schedule import ALL_CATEGORIES, plan_day
 from app.content.templates import render_footer, telegram_post_link
 from app.db.models import Post, Story
 from app.pipeline.check import Checker
-from app.pipeline.select import Selector
+from app.pipeline.select import Selector, is_alert
 from app.pipeline.slots import next_free_slot
 from app.pipeline.state import PostKind, PostStatus, transition
 from app.pipeline.write import DraftResult, Writer, draft_with_checks
@@ -38,8 +40,23 @@ MAX_STORY_ATTEMPTS = 2
 IMAGE_MISSING_REASON = "🖼 Mos bepul rasm topilmadi — AI rasm (pullik) yoki rasmsiz chiqarish?"
 
 
+ADMIN_MATERIAL_MIN = 120  # bundan uzun matn — admin bergan material (mavzu emas)
+SOURCE_KINDS = ("news", "alert", "tool", "site")
+ADMIN_KINDS = ("news", "alert", "tool", "site", "tip")
+URL_RE = re.compile(r"https?://[^\s<>\"']+")
+_WORD_RE = re.compile(r"[\w'ʻʼ]+", re.UNICODE)
+_STOP = frozenset(
+    "the a an of and or to in on for with is are was new about "
+    "haqida va bilan uchun yangi nima qanday".split()
+)
+
+
 def _is_url(text: str) -> bool:
     return text.strip().lower().startswith(("http://", "https://"))
+
+
+def keywords(text: str) -> set[str]:
+    return {w for w in _WORD_RE.findall(text.lower()) if len(w) > 2 and w not in _STOP}
 
 
 class Pipeline:
@@ -110,7 +127,7 @@ class Pipeline:
             other = PostKind.SITE if kind == PostKind.TOOL else PostKind.TOOL
             story = await self.selector.pick(other)
             kind = other
-        if story is not None and kind == PostKind.NEWS and story.category == "kiber":
+        if story is not None and kind == PostKind.NEWS and is_alert(story):
             kind = PostKind.ALERT
         return story, kind
 
@@ -256,6 +273,8 @@ class Pipeline:
                 risk_flags=extra.get("risk_flags", []),
                 instructions=instructions,
                 extra_allowed=extra.get("extra_allowed", []),
+                category=extra.get("category"),
+                require_source=bool(extra.get("require_source", True)),
             )
         except Exception as exc:
             await self._mark_failed(post_id, exc)
@@ -279,7 +298,11 @@ class Pipeline:
         post.hashtags = out.hashtags
         post.image_prompt = out.image_prompt_en
         if out.image_query_en:
-            post.extra = {**(post.extra or {}), "image_query": out.image_query_en}
+            post.extra = {
+                **(post.extra or {}),
+                "image_query": out.image_query_en,
+                "image_queries": list(out.image_queries_en),
+            }
         await transition(self.repo, post, S.CHECKED, "checker", verdict=report.verdict, rounds=res.rounds)
         if report.verdict == "reject":
             report.needs_approval = True
@@ -487,40 +510,139 @@ class Pipeline:
         return [p.title_short for p in rows if p.title_short]
 
     async def prepare_from_admin(self, text: str, instructions: str | None = None) -> int | None:
+        """/post: havola, admin bergan material (uzun matn) yoki qisqa mavzu.
+
+        - havola → maqola matni manba, turi va turkumi AI bilan aniqlanadi;
+        - uzun matn → aynan shu matn manba (havola shart emas), turi aniqlanadi;
+        - qisqa mavzu → bazadagi soʻnggi yangiliklardan qidiriladi, topilmasa maslahat yoki
+          tushuntiruvchi post (yangi fakt toʻqilmaydi).
+        """
         text = text.strip()
         if _is_url(text):
-            url = text.split()[0]
+            url, _, note = text.partition(" ")
+            url = url.strip()
             body = await extract_text(self.ctx.http, url) if self.ctx.http is not None else None
             if not body:
                 raise ValueError("Havoladan maqola matnini olib boʻlmadi")
+            brief = await self._brief(body[:4000])
+            kind = PostKind(brief.kind) if brief.kind in SOURCE_KINDS else PostKind.NEWS
             pid = await self._new_post(
-                PostKind.NEWS,
+                kind,
                 story_id=None,
                 slot=None,
                 scheduled_at=None,
                 created_by="admin",
                 source_urls=[url],
                 score=None,
-                extra={"category": "yangilik", "source_text": body[:SOURCE_TEXT_LIMIT], "story_title": url},
+                extra={
+                    "category": brief.category,
+                    "source_text": body[:SOURCE_TEXT_LIMIT],
+                    "story_title": brief.title or url,
+                    "source_name": urlparse(url).hostname or None,
+                },
             )
-            return await self._draft(pid, force_approval=True, instructions=instructions)
-        story = await self._find_story(text)
-        if story is not None:
-            kind = PostKind.ALERT if story.category == "kiber" else PostKind.NEWS
-            return await self.prepare_from_story(
-                story.id, kind, None, force_approval=True, created_by="admin", instructions=instructions
+            notes = "; ".join(x for x in (note.strip(), instructions or "") if x) or None
+            return await self._draft(pid, force_approval=True, instructions=notes)
+        if len(text) < ADMIN_MATERIAL_MIN:
+            story = await self._find_story(text)
+            if story is not None:
+                kind = PostKind.ALERT if is_alert(story) else PostKind.NEWS
+                return await self.prepare_from_story(
+                    story.id, kind, None, force_approval=True, created_by="admin", instructions=instructions
+                )
+        brief = await self._brief(text)
+        if len(text) < ADMIN_MATERIAL_MIN and not brief.has_facts:
+            if brief.kind == "tip":
+                return await self.prepare_tip(None, topic=text, created_by="admin", force_approval=True)
+            return await self._prepare_explainer(text, brief, instructions)
+        # Admin bergan material: matnning oʻzi manba, undagi havolalar ruxsat etiladi
+        kind = PostKind(brief.kind) if brief.kind in ADMIN_KINDS else PostKind.NEWS
+        urls = list(dict.fromkeys(u.rstrip(".,;)") for u in URL_RE.findall(text)))
+        pid = await self._new_post(
+            kind,
+            story_id=None,
+            slot=None,
+            scheduled_at=None,
+            created_by="admin",
+            source_urls=urls,
+            score=None,
+            extra={
+                "category": brief.category,
+                "source_text": "Kanal egasi bergan material:\n" + text[:SOURCE_TEXT_LIMIT],
+                "story_title": brief.title or text[:80],
+                "source_name": "kanal egasi",
+                "require_source": False,
+            },
+        )
+        return await self._draft(pid, force_approval=True, instructions=instructions)
+
+    async def _prepare_explainer(self, topic: str, brief: AdminBrief, instructions: str | None) -> int | None:
+        source_text = (
+            f"Mavzu: {topic}\n"
+            "Tushuntiruvchi post yoz: umumiy maʼlum va tekshiriladigan bilimlar asosida, oddiy tilda, "
+            "misollar bilan. Yangi voqea, sana, narx yoki aniq raqamlarni toʻqima; ishonching komil "
+            "boʻlmagan joyda umumiyroq yoz."
+        )
+        pid = await self._new_post(
+            PostKind.EXPLAINER,
+            story_id=None,
+            slot=None,
+            scheduled_at=None,
+            created_by="admin",
+            source_urls=[],
+            score=None,
+            extra={
+                "category": brief.category,
+                "source_text": source_text,
+                "story_title": brief.title or topic,
+                "require_source": False,
+            },
+        )
+        return await self._draft(pid, force_approval=True, instructions=instructions)
+
+    async def _brief(self, text: str) -> AdminBrief:
+        """Admin materialidan post turi va turkumi (tez model); xato boʻlsa — oddiy yangilik."""
+        try:
+            res = await self.ctx.router.complete(
+                "fast",
+                [
+                    Message("system", load_prompt("admin_brief"), cache=True),
+                    Message("user", wrap_external("user", text[:4000])),
+                ],
+                schema=AdminBrief,
+                temperature=0.0,
+                max_tokens=300,
             )
-        return await self.prepare_tip(None, topic=text, created_by="admin", force_approval=True)
+            brief: AdminBrief = res.parsed
+        except Exception as exc:
+            logger.warning("Admin materialini tasniflab boʻlmadi: {}", exc)
+            brief = AdminBrief(has_facts=len(text) >= ADMIN_MATERIAL_MIN)
+        if brief.category not in ALL_CATEGORIES:
+            brief.category = "yangilik"
+        if brief.kind not in {*ADMIN_KINDS, "explainer"}:
+            brief.kind = "news"
+        brief.title = normalize_uz(brief.title.strip())[:80]
+        return brief
 
     async def _find_story(self, topic: str) -> Story | None:
+        """Soʻnggi 7 kundagi story: sarlavha oʻxshashligi yoki kalit soʻzlar mosligi boʻyicha."""
         stories = await self.repo.stories.find(
             {
-                "first_seen": {"$gte": self.clock() - timedelta(hours=72)},
+                "first_seen": {"$gte": self.clock() - timedelta(days=7)},
                 "status": {"$in": ["new", "filtered", "scored"]},
             }
         )
-        best = max(stories, key=lambda st: title_similarity(topic, st.title), default=None)
-        if best is not None and title_similarity(topic, best.title) >= 60:
+        words = keywords(topic)
+
+        def value(st: Story) -> float:
+            sim = title_similarity(topic, st.title)
+            if words:
+                overlap = len(words & keywords(st.title)) / len(words)
+                sim = max(sim, overlap * 100 if overlap >= 0.6 else 0)
+            return sim
+
+        best = max(stories, key=value, default=None)
+        if best is not None and value(best) >= 60:
             return best
         return None
 

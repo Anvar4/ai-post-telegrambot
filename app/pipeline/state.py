@@ -36,6 +36,7 @@ class PostKind(StrEnum):
     QUIZ = "quiz"
     DIGEST = "digest"
     QA = "qa"
+    EXPLAINER = "explainer"  # tushuntiruvchi post (admin mavzusi boʻyicha, yangi voqeasiz)
     MANUAL = "manual"  # admin oʻzi yuklagan post (matn / rasm / video)
 
 

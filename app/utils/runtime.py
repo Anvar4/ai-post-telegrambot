@@ -13,7 +13,20 @@ RUNTIME_DEFAULTS: dict[str, Any] = {
     "publish_mode": None,  # None -> .env dagi PUBLISH_MODE
     "paused": False,
     "slot_times": ["08:30", "13:00", "19:30"],  # kuniga nechta post va soat nechida
-    "categories": ["kiber", "yangilik", "ai", "ilova", "sayt", "maslahat"],
+    "categories": [
+        "yangilik",
+        "ai",
+        "dasturlash",
+        "gadjet",
+        "kiber",
+        "robot",
+        "kripto",
+        "avto",
+        "kosmos",
+        "ilova",
+        "sayt",
+        "maslahat",
+    ],
     "polls_per_week": 2,
     "quizzes_per_week": 2,
     "digest": {"weekday": 6, "time": "20:00"},  # 6 = yakshanba
@@ -57,6 +70,18 @@ class Runtime:
 
     async def all(self) -> dict[str, Any]:
         return {k: await self.get(k) for k in RUNTIME_DEFAULTS}
+
+    async def migrate(self) -> None:
+        """Bir martalik: yangi qoʻshilgan turkumlar eski saqlangan tanlovga qoʻshiladi."""
+        from app.content.schedule import ADDED_CATEGORIES_V2, ALL_CATEGORIES
+
+        if await self.repo.get_setting("rt_meta:categories_v") == 2:
+            return
+        stored = await self.repo.get_setting("rt:categories")
+        if stored is not None:
+            cats = set(stored) | set(ADDED_CATEGORIES_V2)
+            await self.repo.set_setting("rt:categories", [c for c in ALL_CATEGORIES if c in cats])
+        await self.repo.set_setting("rt_meta:categories_v", 2)
 
     async def publish_mode(self) -> str:
         return str(await self.get("publish_mode"))

@@ -1,6 +1,6 @@
 # IT Dunyosi AI bot
 
-"IT Dunyosi" Telegram kanali uchun sunʼiy intellekt boshqaradigan administrator-bot. Bot IT, AI va kiberxavfsizlik yangiliklarini oʻzi topadi, oʻzbek tilida post yozadi, faktlarni tekshiradi, muqova rasmini chizadi va postlarni jadval boʻyicha chiqaradi. Bundan tashqari soʻrovnoma va testlar oʻtkazadi, obunachilarning savollariga javob beradi, izohlarni moderatsiya qiladi hamda sizga kunlik va haftalik hisobot yuboradi.
+"IT Dunyosi" Telegram kanali uchun sunʼiy intellekt boshqaradigan administrator-bot. Bot butun texnologiya dunyosi yangiliklarini — AI, dasturlash, smartfon va gadjetlar, robototexnika, kripto, avtomobil texnologiyalari, kosmos, kiberxavfsizlik — 48 ta manbadan oʻzi topadi, oʻzbek tilida post yozadi, faktlarni tekshiradi, muqova rasmini chizadi va postlarni jadval boʻyicha chiqaradi. Bundan tashqari soʻrovnoma va testlar oʻtkazadi, obunachilarning savollariga javob beradi, izohlarni moderatsiya qiladi hamda sizga kunlik va haftalik hisobot yuboradi.
 
 > Toʻliq talablar `SPEC.md` da. Bu fayl botni sozlash va ishga tushirish boʻyicha qoʻllanma.
 
@@ -29,8 +29,9 @@ Manbalar (RSS, CISA KEV, NVD, Hacker News, GitHub, UZCERT…) ── har 30 daqi
    → gpt-6-luna: mavzuga oidmi?  → gpt-6-sol: 0–100 ball, kategoriya, shoshilinchmi?
    → 1-model (yozuvchi): oʻzbekcha post
    → gpt-6-sol: fakt-tekshiruv (kerak boʻlsa 2 martagacha tuzatish)
-   → rasm (AIsiz, bepul): Pexels / Openverse (Flickr) / Wikimedia — litsenziya va oʻlcham tekshiruvi,
-     soʻrov qisqartirib va turkum boʻyicha qayta qidiriladi; baribir topilmasa — brend muqova
+   → rasm (AIsiz, bepul): avval Pexels / Pixabay, keyin Openverse (Flickr) / Wikimedia — litsenziya,
+     oʻlcham va mavzuga moslik (rasm tavsifida soʻrov soʻzlari) tekshiruvi; yozuvchining 3 ta aniq
+     soʻrovi, keyin turkum soʻrovi; mos rasm topilmasa — brend muqova (gʻalati rasm qoʻyilmaydi)
    → semi_auto: qoralama sizga tugmalar bilan keladi | auto: oʻzi chiqadi
    → nashrdan keyin postga "📤 Ulashish" tugmasi qoʻshiladi
 ```
@@ -43,11 +44,11 @@ Manbalar (RSS, CISA KEV, NVD, Hacker News, GitHub, UZCERT…) ── har 30 daqi
 
 Bitta model ishlamay qolsa, bot toʻxtamaydi: yozuvchi oʻrnini `gpt-6-sol` bosadi, rasm oʻrniga brend fon chiziladi, tekshiruvchi ishlamasa post albatta sizning tasdigʻingizga keladi.
 
-**Standart jadval** (Toshkent vaqti). Hammasi `/settings` menyusida katakchalar bilan oʻzgaradi: kuniga nechta post (1–8), soat nechida, qaysi turkumlar (kiber, IT yangiliklar, AI, ilovalar, saytlar, maslahatlar) va haftasiga nechta soʻrovnoma/test (0–7).
+**Standart jadval** (Toshkent vaqti). Hammasi `/settings` menyusida katakchalar bilan oʻzgaradi: kuniga nechta post (1–8), soat nechida, qaysi turkumlar (IT yangiliklar, AI, dasturlash, gadjetlar, kiber, robototexnika, kripto, avto, kosmos, ilovalar, saytlar, maslahatlar) va haftasiga nechta soʻrovnoma/test (0–7).
 
 | Vaqt | Nima chiqadi |
 |---|---|
-| 08:30 | Asosiy yangilik yoki kiber ogohlantirish |
+| 08:30 | Asosiy yangilik (turkumlar navbatlashadi: bugun chiqqan turkum keyingi slotda ustunlikni yoʻqotadi) |
 | 13:00 | Ilova (haftasiga 3) / sayt (2) / maslahat (2) |
 | 19:30 | Yangilik, soʻrovnoma (haftasiga 2) yoki test (haftasiga 2) |
 | Yakshanba 20:00 | Haftalik dayjest |
@@ -213,7 +214,7 @@ Har bir qoralama sizga quyidagi koʻrinishda keladi: rasm, post matni, muharrir 
 | 🖼 Boshqa rasm | Qidiruvdagi keyingi bepul rasmni oladi (AI rejimida — yangisini chizadi) |
 | ❌ Rad etish | Postni bekor qiladi |
 
-**Rasm qidirish AIsiz ishlaydi**: avval mavzu soʻzlari, keyin qisqaroq soʻrov, keyin turkum (masalan, "cyber security") boʻyicha qidiriladi. Hech narsa topilmasa post brend muqova (sarlavha yozilgan fon) bilan chiqadi. Faqat brend muqova ham chizilmasa, post sizga shu tugmalar bilan keladi:
+**Rasm qidirish AIsiz ishlaydi**: avval yozuvchi bergan aniq soʻrovlar ("electric car charging", "humanoid robot"), keyin turkum soʻrovi (masalan, "rocket launch") boʻyicha qidiriladi. Rasm tavsifida mavzu soʻzlari boʻlmasa u olinmaydi. Pexels yoki Pixabay kaliti qoʻshilsa, rasmlar ancha sifatli boʻladi. Hech narsa topilmasa post brend muqova (sarlavha yozilgan fon) bilan chiqadi. Faqat brend muqova ham chizilmasa, post sizga shu tugmalar bilan keladi:
 
 | Tugma | Nima qiladi |
 |---|---|
@@ -244,7 +245,7 @@ Yangiliklar 6 soat ichida tasdiqlanmasa eskiradi (`EXPIRED`). Ilova, sayt va mas
 | `/start` | Menyu |
 | `/status` | Holat, navbat, bugungi xarajat |
 | `/queue`, `/show ID`, `/time ID HH:MM` | Navbat, qoralamani koʻrish, vaqtni oʻzgartirish |
-| `/post <mavzu yoki havola>` | Darhol post tayyorlash |
+| `/post <havola, maʼlumot yoki mavzu>` | Darhol post: havola → maqola asosida; uzun matn → siz bergan faktlar asosida (turi va turkumi avtomatik); qisqa mavzu → soʻnggi 7 kun yangiliklaridan, topilmasa «Bilib oling» tushuntiruvchi posti |
 | `/new` yoki rasm/video/GIF yuborish | Oʻzingizning postingizni rejalashtirish |
 | `/poll [mavzu]`, `/quiz [mavzu]` | Soʻrovnoma yoki test |
 | `/digest` | Haftalik dayjest |

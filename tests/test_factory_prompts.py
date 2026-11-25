@@ -79,7 +79,7 @@ def test_image_none(tmp_path: Path) -> None:
 
 
 def test_load_prompt_fills_vars_and_keeps_json_braces() -> None:
-    text = load_prompt("writer", kind="news", template="T", min_len=500, max_len=900)
+    text = load_prompt("writer", kind="news", template="T", min_len=500, max_len=900, category_info="")
     assert "{{" not in text
     assert "news" in text
     assert '{"title_short"' in text or "title_short" in text

@@ -123,3 +123,15 @@ def test_normalize_uz_tutuq_belgisi() -> None:
     assert normalize_uz("o'zbek g'oya") == "oʻzbek gʻoya"
     assert normalize_uz("Google's update") == "Google's update"
     assert normalize_uz("'Kotirovka' so'zi") == "'Kotirovka' soʻzi"
+
+
+def test_category_emoji_and_hashtag() -> None:
+    from app.content.hashtags import normalize_hashtags
+    from app.content.templates import cover_label, template_for
+    from app.pipeline.state import PostKind
+
+    assert template_for(PostKind.NEWS, "@k", "robot").startswith("🦾")
+    assert template_for(PostKind.NEWS, "@k").startswith("📰")
+    assert normalize_hashtags([], PostKind.NEWS, "kripto") == ["#yangilik", "#kripto"]
+    assert cover_label(PostKind.NEWS, "avto") == "AVTO"
+    assert cover_label(PostKind.TIP, "maslahat") == "MASLAHAT"

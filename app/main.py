@@ -89,6 +89,7 @@ async def build_context(settings: Settings, db: Any = None) -> tuple[AppContext,
     from app.collectors.seed import seed_sources
 
     await seed_sources(repo)
+    await ctx.runtime.migrate()
     return ctx, bot, client
 
 

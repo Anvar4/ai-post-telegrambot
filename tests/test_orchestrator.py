@@ -336,3 +336,44 @@ async def test_tool_fallback_respects_disabled_tips(ctx) -> None:
 async def test_unknown_slot_time_is_skipped(ctx) -> None:
     make_llms(ctx)
     assert await pipeline(ctx).prepare_slot("10:45", SLOT_AT) is None
+
+
+def _brief(llms, **answer) -> None:
+    llms["fast"].routes.insert(0, ("post turini aniqla", json.dumps(answer)))
+
+
+async def test_prepare_from_admin_long_material_is_used_as_source(ctx) -> None:
+    llms = make_llms(ctx)
+    _brief(llms, kind="news", category="robot", title="Atlas roboti yangilandi", has_facts=True)
+    material = "Boston Dynamics kompaniyasi Atlas robotining yangi elektr versiyasini taqdim etdi. " * 3
+    pid = await pipeline(ctx).prepare_from_admin(material)
+    post = await ctx.repo.get_post(pid)
+    assert post.status == PostStatus.PENDING_APPROVAL
+    assert post.kind == PostKind.NEWS
+    assert post.extra["category"] == "robot" and post.extra["require_source"] is False
+    system, user = llms["writer"].calls[0][0].content, llms["writer"].calls[0][-1].content
+    assert "Boston Dynamics" in user and "Robototexnika" in system and "🦾" in system
+
+
+async def test_prepare_from_admin_short_topic_without_facts_is_explainer(ctx) -> None:
+    llms = make_llms(ctx)
+    _brief(llms, kind="explainer", category="ai", title="LLM nima", has_facts=False)
+    pid = await pipeline(ctx).prepare_from_admin("Katta til modellari qanday ishlaydi")
+    post = await ctx.repo.get_post(pid)
+    assert post.kind == PostKind.EXPLAINER and post.extra["category"] == "ai"
+    assert post.status == PostStatus.PENDING_APPROVAL
+
+
+async def test_prepare_from_admin_short_topic_finds_recent_story_by_keywords(ctx) -> None:
+    make_llms(ctx)
+    st = await ctx.repo.stories.insert(
+        Story(
+            title="Samsung unveils Galaxy S27 with new battery",
+            status="scored",
+            category="gadjet",
+            first_seen=NOW.astimezone(UTC) - timedelta(days=3),
+            last_seen=NOW.astimezone(UTC),
+        )
+    )
+    found = await pipeline(ctx)._find_story("Galaxy S27 Samsung")
+    assert found is not None and found.id == st.id

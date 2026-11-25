@@ -19,15 +19,51 @@ TIME_CHOICES = (
 )  # fmt: skip
 
 CATEGORY_LABELS: dict[str, str] = {
-    "kiber": "🛡 Kiberxavfsizlik",
     "yangilik": "📰 IT yangiliklar",
     "ai": "🤖 Sunʼiy intellekt",
+    "dasturlash": "👨‍💻 Dasturlash",
+    "gadjet": "📱 Smartfon va gadjetlar",
+    "kiber": "🛡 Kiberxavfsizlik",
+    "robot": "🦾 Robototexnika",
+    "kripto": "🪙 Kripto va blokcheyn",
+    "avto": "🚗 Avtomobil texnologiyalari",
+    "kosmos": "🚀 Kosmos va fan",
     "ilova": "🧰 Foydali ilovalar",
     "sayt": "🌐 Foydali saytlar",
     "maslahat": "💡 Maslahatlar",
 }
 ALL_CATEGORIES = tuple(CATEGORY_LABELS)
-NEWS_CATEGORIES = ("kiber", "yangilik", "ai")
+# Yangilik slotlari shu turkumlar orasidan (xilma-xillik bilan) tanlanadi
+NEWS_CATEGORIES = ("yangilik", "ai", "dasturlash", "gadjet", "kiber", "robot", "kripto", "avto", "kosmos")
+# v2 da qoʻshilgan turkumlar: eski /settings tanlovi bor bazalarda avtomatik yoqiladi
+ADDED_CATEGORIES_V2 = ("dasturlash", "gadjet", "robot", "kripto", "avto", "kosmos")
+CATEGORY_EMOJI: dict[str, str] = {k: v.split(" ", 1)[0] for k, v in CATEGORY_LABELS.items()}
+CATEGORY_HASHTAG: dict[str, str] = {
+    "yangilik": "#texnologiya",
+    "ai": "#suniyintellekt",
+    "dasturlash": "#dasturlash",
+    "gadjet": "#gadjet",
+    "kiber": "#kiberxavfsizlik",
+    "robot": "#robototexnika",
+    "kripto": "#kripto",
+    "avto": "#avto",
+    "kosmos": "#kosmos",
+    "ilova": "#ilova",
+    "sayt": "#sayt",
+    "maslahat": "#maslahat",
+}
+# Muqova rasmidagi belgi (katta harflar)
+CATEGORY_COVER_LABEL: dict[str, str] = {
+    "yangilik": "IT YANGILIK",
+    "ai": "SUNʼIY INTELLEKT",
+    "dasturlash": "DASTURLASH",
+    "gadjet": "GADJETLAR",
+    "kiber": "KIBERXAVFSIZLIK",
+    "robot": "ROBOTOTEXNIKA",
+    "kripto": "KRIPTO",
+    "avto": "AVTO",
+    "kosmos": "KOSMOS",
+}
 FEATURE_CATEGORY: dict[PostKind, str] = {
     PostKind.TOOL: "ilova",
     PostKind.SITE: "sayt",
@@ -48,7 +84,7 @@ POLL_OFFSET, QUIZ_OFFSET = 1, 2  # standart: so'rovnoma — seshanba/juma, test 
 
 # Post turi -> saralovchi kategoriyalari
 KIND_CATEGORIES: dict[PostKind, tuple[str, ...]] = {
-    PostKind.NEWS: ("kiber", "yangilik", "ai"),
+    PostKind.NEWS: NEWS_CATEGORIES,
     PostKind.ALERT: ("kiber",),
     PostKind.TOOL: ("ilova",),
     PostKind.SITE: ("sayt",),

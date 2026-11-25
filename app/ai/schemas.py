@@ -24,6 +24,25 @@ class WriterOutput(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
     image_prompt_en: str = Field(default="", description="Inglizcha qisqa rasm prompti")
     image_query_en: str = Field(default="", description="Fotobank qidiruvi uchun 2–4 inglizcha soʻz")
+    image_queries_en: list[str] = Field(
+        default_factory=list, description="Fotobank uchun 2–3 muqobil soʻrov (aniqdan umumiyga)"
+    )
+
+    @field_validator("image_queries_en", mode="before")
+    @classmethod
+    def _queries(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return [q for q in v.split(",") if q.strip()]
+        return v or []
+
+
+class AdminBrief(BaseModel):
+    """Admin /post materialini tasniflash: qanday post, qaysi turkum."""
+
+    kind: str = "news"
+    category: str = "yangilik"
+    title: str = ""
+    has_facts: bool = True
 
 
 class FilterItem(BaseModel):

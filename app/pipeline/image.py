@@ -11,7 +11,7 @@ from PIL import Image
 
 from app.ai.prompts import load_prompt
 from app.content.brand_image import canvas_size, render_cover
-from app.content.templates import KIND_LABEL
+from app.content.templates import cover_label
 from app.db.models import Post
 from app.images.search import ImageSearch
 from app.pipeline.state import PostKind
@@ -21,24 +21,32 @@ if TYPE_CHECKING:
 
 NO_IMAGE_KINDS = frozenset({PostKind.POLL, PostKind.QUIZ})
 REVIEW_MAX_SIDE = 768
-QUERY_WORDS = 5
+QUERY_WORDS = 4
 # AI rasm avtomatik rejim emas: faqat admin tugmasi bilan (Pipeline.use_ai_image)
 IMAGE_MODES = ("search_then_ask", "none")
 # Mavzu boʻyicha hech narsa topilmasa — turkum boʻyicha umumiy fotobank soʻrovi
 CATEGORY_QUERIES = {
     "kiber": "cyber security",
-    "ai": "artificial intelligence",
-    "yangilik": "technology",
-    "ilova": "software app",
+    "ai": "artificial intelligence robot",
+    "yangilik": "computer technology",
+    "dasturlash": "programming code laptop",
+    "gadjet": "smartphone",
+    "robot": "robot",
+    "kripto": "bitcoin cryptocurrency",
+    "avto": "electric car",
+    "kosmos": "rocket launch",
+    "ilova": "mobile app smartphone",
     "sayt": "website laptop",
+    "maslahat": "smartphone laptop",
 }
 KIND_QUERIES = {
     PostKind.ALERT: "cyber security",
-    PostKind.TOOL: "software app",
+    PostKind.TOOL: "mobile app smartphone",
     PostKind.SITE: "website laptop",
-    PostKind.TIP: "smartphone",
-    PostKind.DIGEST: "technology",
-    PostKind.NEWS: "technology",
+    PostKind.TIP: "smartphone laptop",
+    PostKind.EXPLAINER: "computer technology",
+    PostKind.DIGEST: "computer technology",
+    PostKind.NEWS: "computer technology",
 }
 KEEP_STATUSES = ("found", "ai", "brand")
 
@@ -52,11 +60,21 @@ def _thumbnail(data: bytes) -> bytes:
 
 
 def search_query(post: Post) -> str:
-    """Fotobank soʻrovi: yozuvchining `image_query_en` i, boʻlmasa rasm promptining boshi."""
+    """Asosiy fotobank soʻrovi: yozuvchining `image_query_en` i, boʻlmasa rasm promptining boshi."""
     query = str((post.extra or {}).get("image_query") or "").strip()
     if not query:
         query = " ".join((post.image_prompt or "").replace(",", " ").split()[:QUERY_WORDS])
     return query
+
+
+def search_queries(post: Post) -> list[str]:
+    """Yozuvchining 2–3 muqobil soʻrovi (aniqdan umumiyga); eski postlarda — bitta soʻrov."""
+    extra = post.extra or {}
+    queries = [str(q).strip() for q in extra.get("image_queries") or [] if str(q).strip()]
+    main = search_query(post)
+    if main and main.lower() not in (q.lower() for q in queries):
+        queries.insert(0, main)
+    return queries
 
 
 def fallback_query(post: Post) -> str:
@@ -84,9 +102,9 @@ class ImageStage:
             if await self.ctx.runtime.get("image_mode") == "none":
                 return None
             return await self._from_search(post, fresh=fresh)
-        kind = PostKind(post.kind)
         topic = post.image_prompt or post.title_short or "technology news"
-        data = await self.make(title=post.title_short or "", category=KIND_LABEL.get(kind, ""), topic=topic)
+        label = cover_label(post.kind, (post.extra or {}).get("category"))
+        data = await self.make(title=post.title_short or "", category=label, topic=topic)
         if data is None:
             return None
         path = await self._save(post_id, data)
@@ -112,11 +130,11 @@ class ImageStage:
             if status == "none":
                 return None
         seen = list(extra.get("image_seen", []))
-        query = search_query(post)
+        queries = search_queries(post)
         found = None
         if self.search is not None:
-            # AIsiz: litsenziya va oʻlcham tekshiruvi yetarli (vision tekshiruv fotolarni koʻp rad etardi)
-            found = await self.search.find(query, fallback=fallback_query(post), exclude=seen)
+            # AIsiz: litsenziya, oʻlcham va mavzuga moslik (tavsifdagi soʻzlar) tekshiriladi
+            found = await self.search.find(queries, fallback=fallback_query(post), exclude=seen)
         cover = await self._cover(found.data, post) if found is not None else None
         if found is None or cover is None:
             if post.image_path and extra.get("image_status") in KEEP_STATUSES:
@@ -146,7 +164,7 @@ class ImageStage:
                 render_cover,
                 base,
                 title=post.title_short or "",
-                category=KIND_LABEL.get(PostKind(post.kind), ""),
+                category=cover_label(post.kind, (post.extra or {}).get("category")),
                 username=self.ctx.settings.channel_username,
                 size=canvas_size(self.ctx.settings.image_size),
             )

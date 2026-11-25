@@ -209,3 +209,29 @@ async def test_pick_skips_disabled_categories(ctx) -> None:
     story = await Selector(ctx, clock=lambda: NOW).pick(PostKind.NEWS)
     assert story is not None and story.id == ai
     assert await Selector(ctx, clock=lambda: NOW).pick(PostKind.ALERT) is None
+
+
+async def test_pick_prefers_category_not_used_today(ctx) -> None:
+    await add_post(ctx, title="Kiber 1", category="kiber")
+    await add_story(ctx, "Ransomware hits hospital chain", status="scored", score=80, category="kiber")
+    robot = await add_story(ctx, "New humanoid robot walks", status="scored", score=70, category="robot")
+    story = await Selector(ctx, clock=lambda: NOW).pick(PostKind.NEWS)
+    assert story is not None and story.id == robot
+
+
+async def test_pick_big_story_still_wins_over_diversity(ctx) -> None:
+    await add_post(ctx, title="AI 1", category="ai")
+    big = await add_story(ctx, "OpenAI releases new model", status="scored", score=95, category="ai")
+    await add_story(ctx, "Minor car update", status="scored", score=60, category="avto")
+    story = await Selector(ctx, clock=lambda: NOW).pick(PostKind.NEWS)
+    assert story is not None and story.id == big
+
+
+def test_is_alert_only_for_real_vulnerabilities() -> None:
+    from app.pipeline.select import is_alert
+
+    assert is_alert(Story(title="Chrome CVE-2026-1234 patched", category="kiber"))
+    assert is_alert(Story(title="Zero-day in WhatsApp exploited", category="kiber"))
+    assert is_alert(Story(title="Big outage", category="kiber", is_breaking=True))
+    assert not is_alert(Story(title="Startup raises $20M for security platform", category="kiber"))
+    assert not is_alert(Story(title="Chrome CVE-2026-1234 patched", category="yangilik"))

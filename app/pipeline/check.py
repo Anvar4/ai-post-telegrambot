@@ -25,6 +25,7 @@ LENGTH_RULES: dict[PostKind, tuple[int, int]] = {
     PostKind.TOOL: (300, 1100),
     PostKind.SITE: (300, 1100),
     PostKind.TIP: (350, 1100),
+    PostKind.EXPLAINER: (400, 1100),
     PostKind.DIGEST: (200, 1500),
     PostKind.QA: (200, 2000),
 }
@@ -112,6 +113,7 @@ class Checker:
         has_image: bool,
         risk_flags: Sequence[str] = (),
         source_urls: Sequence[str] = (),
+        require_source: bool = True,
     ) -> CheckReport:
         kind = PostKind(kind)
         code_issues: list[dict[str, str]] = []
@@ -128,7 +130,7 @@ class Checker:
                 ],
             )
         # 2) Manba havolasi
-        if kind in NEEDS_SOURCE and not links:
+        if require_source and kind in NEEDS_SOURCE and not links:
             code_issues.append(
                 {
                     "type": "missing_source",
@@ -170,6 +172,7 @@ class Checker:
         )
         user = (
             f"Post turi: {kind.value}. Uzunlik: {length} belgi (talab: 500–900).\n\n"
+            + ("" if require_source else "Material kanal egasidan — manba havolasi shart emas.\n")
             + wrap_external("source", url_note + (source_text or "(manba matni yoʻq — maslahat posti)"))
             + "\n\n"
             + wrap_external("draft", draft_html)

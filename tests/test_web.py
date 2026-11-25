@@ -182,7 +182,7 @@ async def test_settings_read_and_update(web_ctx) -> None:
         await client.close()
     rt = web_ctx.runtime
     assert await rt.get("slot_times") == ["09:00", "18:00"]
-    assert await rt.get("categories") == ["kiber", "ai"]
+    assert await rt.get("categories") == ["ai", "kiber"]
     assert await rt.get("polls_per_week") == 4
     assert await rt.publish_mode() == "auto"
     assert await rt.paused() is True

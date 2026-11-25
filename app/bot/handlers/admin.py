@@ -21,7 +21,7 @@ HELP = """<b>IT Dunyosi — boshqaruv pulti</b>
 
 /status — bot holati, navbat, xarajat
 /queue — rejadagi va tasdiq kutayotgan postlar
-/post &lt;mavzu yoki havola&gt; — darhol post tayyorlash
+/post &lt;havola, maʼlumot matni yoki mavzu&gt; — darhol post tayyorlash
 /new — oʻzingiz yozgan post (matn); rasm, video yoki GIF ni shunchaki yuboring — vaqtini tanlaysiz
 /poll [mavzu], /quiz [mavzu] — so'rovnoma yoki test
 /digest — haftalik dayjest

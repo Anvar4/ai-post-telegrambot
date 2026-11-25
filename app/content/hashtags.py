@@ -17,6 +17,7 @@ DEFAULT_HASHTAGS: dict[PostKind, list[str]] = {
     PostKind.QUIZ: ["#test"],
     PostKind.DIGEST: ["#dayjest"],
     PostKind.QA: ["#savoljavob"],
+    PostKind.EXPLAINER: ["#bilib_oling"],
 }
 
 MAX_HASHTAGS = 4
@@ -28,10 +29,13 @@ def _clean(tag: str) -> str:
     return f"#{body}" if body else ""
 
 
-def normalize_hashtags(tags: Iterable[str], kind: PostKind | str) -> list[str]:
+def normalize_hashtags(tags: Iterable[str], kind: PostKind | str, category: str | None = None) -> list[str]:
+    from app.content.schedule import CATEGORY_HASHTAG
+
     result: list[str] = []
     seen: set[str] = set()
-    for raw in [*DEFAULT_HASHTAGS.get(PostKind(kind), []), *tags]:
+    cat_tag = [CATEGORY_HASHTAG[category]] if category in CATEGORY_HASHTAG else []
+    for raw in [*DEFAULT_HASHTAGS.get(PostKind(kind), []), *cat_tag, *tags]:
         tag = _clean(raw)
         if not tag:
             continue

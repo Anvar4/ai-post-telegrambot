@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from app.utils.runtime import Runtime
 
 MAX_ATTEMPTS = 3
-CTA_KINDS = frozenset({PostKind.NEWS, PostKind.TOOL, PostKind.SITE, PostKind.TIP})
+CTA_KINDS = frozenset({PostKind.NEWS, PostKind.TOOL, PostKind.SITE, PostKind.TIP, PostKind.EXPLAINER})
 EXPIRING_KINDS = frozenset({PostKind.NEWS, PostKind.ALERT, PostKind.DIGEST})
 POLL_HOURS = {"fun": 24, "quiz": 24, "research": 48}
 

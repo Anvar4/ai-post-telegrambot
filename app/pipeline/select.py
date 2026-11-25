@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -25,7 +26,22 @@ if TYPE_CHECKING:
 
 FILTER_BATCH = 40
 TOPIC_SIMILARITY = 75
+# Xilma-xillik: bugun shu turkumdagi har post uchun −20 ball, oxirgi 3 kundagi har post uchun −4
+DIVERSITY_TODAY = 20
+DIVERSITY_RECENT = 4
+RECENT_DAYS = 3
+PICK_POOL = 200
 DEAD_STATUSES = [PostStatus.REJECTED.value, PostStatus.EXPIRED.value, PostStatus.FAILED.value]
+
+
+_VULN_RE = re.compile(
+    r"CVE-\d{4}-\d+|zero[- ]?day|0-day|vulnerab|exploit|patch|zaiflik|уязвим", re.IGNORECASE
+)
+
+
+def is_alert(story: Story) -> bool:
+    """«🔴 Ogohlantirish» shabloni faqat haqiqiy zaiflik/shoshilinch kiber xabar uchun."""
+    return story.category == "kiber" and (story.is_breaking or bool(_VULN_RE.search(story.title or "")))
 
 
 class Selector:
@@ -191,7 +207,9 @@ class Selector:
         window = timedelta(hours=24) if kind in (PostKind.NEWS, PostKind.ALERT) else timedelta(days=7)
         min_score = int(await self.ctx.runtime.get("min_score"))
         cap = int(await self.ctx.runtime.get("category_daily_cap"))
-        used_today = await self._categories_today(now)
+        start, end = day_bounds(now, self.ctx.settings.tz)
+        used_today = await self._category_counts(start, end)
+        used_recent = await self._category_counts(now - timedelta(days=RECENT_DAYS), end)
         recent = await self.recent_topics(now)
         candidates = await self.repo.stories.find(
             {
@@ -201,17 +219,24 @@ class Selector:
                 "first_seen": {"$gte": now - window},
             },
             sort=[("score", -1), ("article_count", -1), ("first_seen", -1)],
-            limit=50,
+            limit=PICK_POOL,
         )
+        best: Story | None = None
+        best_value = float("-inf")
         for story in candidates:
-            if used_today[story.category or ""] >= cap:
+            cat = story.category or ""
+            if used_today[cat] >= cap:
                 continue
             if "duplicate" in (story.risk_flags or []):
                 continue
             if any(title_similarity(story.title, t) >= TOPIC_SIMILARITY for t in recent):
                 continue
-            return story
-        return None
+            # Bir turkum kanalni egallab olmasligi uchun: koʻp chiqqan turkum jarima oladi
+            penalty = DIVERSITY_TODAY * used_today[cat] + DIVERSITY_RECENT * used_recent[cat]
+            value = (story.score or 0) - penalty
+            if value > best_value:
+                best, best_value = story, value
+        return best
 
     async def _enabled_categories(self) -> set[str] | None:
         try:
@@ -220,8 +245,7 @@ class Selector:
             return None
         return set(cats) if cats is not None else None
 
-    async def _categories_today(self, now: datetime) -> Counter[str]:
-        start, end = day_bounds(now, self.ctx.settings.tz)
+    async def _category_counts(self, start: datetime, end: datetime) -> Counter[str]:
         posts = await self.repo.posts.find(
             {"created_at": {"$gte": start, "$lt": end}, "status": {"$nin": DEAD_STATUSES}}
         )

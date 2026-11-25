@@ -27,7 +27,7 @@ from app.utils.timeutil import parse_hhmm, to_tz, utcnow
 S = PostStatus
 HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 STATUS_UZ = {S.PENDING_APPROVAL: "⏳ tasdiq kutmoqda", S.SCHEDULED: "🕒 rejada"}
-CATEGORIES = ("kiber", "yangilik", "ai", "ilova", "sayt", "mahalliy")
+CATEGORIES = (*(c for c in ALL_CATEGORIES if c != "maslahat"), "mahalliy")
 INT_KEYS = {
     "approval_timeout_min": (5, 1440),
     "news_expiry_hours": (1, 72),
@@ -48,7 +48,12 @@ RESCHEDULE_KEYS = ("slot_times", "digest", "prepare_minutes_before")
 async def cmd_post(message: Message, command: CommandObject, ctx: AppContext) -> None:
     arg = (command.args or "").strip()
     if not arg:
-        await message.answer("Foydalanish: /post &lt;mavzu yoki havola&gt;")
+        await message.answer(
+            "Foydalanish:\n"
+            "• /post &lt;havola&gt; — maqola asosida post\n"
+            "• /post &lt;maʼlumot matni&gt; — siz bergan faktlar asosida post (turi avtomatik)\n"
+            "• /post &lt;qisqa mavzu&gt; — soʻnggi yangiliklardan qidiradi, topilmasa tushuntiruvchi post"
+        )
         return
     await message.answer("⏳ Post tayyorlanmoqda… qoralama shu yerga keladi.")
     try:

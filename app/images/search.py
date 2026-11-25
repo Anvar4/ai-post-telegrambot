@@ -2,7 +2,9 @@
 
 Maqola yoki "rasmiy manba" rasmlari olinmaydi (mualliflik huquqi). Ruxsat etilgan litsenziyalar:
 Pexels litsenziyasi, CC0 / Public domain / CC BY / CC BY-SA (NC va ND — yoʻq).
-Uzun soʻrov natija bermasa qisqartiriladi, oxirida turkum boʻyicha umumiy soʻrov ishlatiladi.
+Avval fotobanklar (Pexels, Pixabay), keyin ochiq kolleksiyalar. Har nomzod mavzuga mosligi
+(sarlavha/teg/tavsifda soʻrov soʻzi borligi) tekshiriladi — tasodifiy, gʻalati rasmlar oʻtmaydi.
+Soʻrov bitta umumiy soʻzgacha qisqartirilmaydi; oxirida turkum boʻyicha aniq soʻrov ishlatiladi.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import re
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
@@ -41,6 +43,13 @@ PER_SOURCE = 10
 MAX_DOWNLOADS = 12
 PER_QUERY_DOWNLOADS = 4
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+STOCK_SOURCES = frozenset({"pexels", "pixabay"})
+# Mavzuga moslikni koʻrsatmaydigan umumiy soʻzlar
+GENERIC_WORDS = frozenset(
+    "a an the and or of for with in on at to by from new old modern digital tech technology technologies "
+    "concept abstract future futuristic background image photo picture closeup close up view top "
+    "illustration news update innovation business data".split()
+)
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 _CC_RE = re.compile(r"^cc[ -]by(?:-sa)?[ -]\d")
@@ -58,14 +67,34 @@ def license_ok(short_name: str) -> bool:
 
 
 def query_variants(query: str) -> list[str]:
-    """Toʻliq soʻrov → birinchi/oxirgi ikki soʻz → oxirgi soʻz (odatda asosiy predmet)."""
+    """Toʻliq soʻrov → (3+ soʻz boʻlsa) oxirgi ikki soʻz. Bitta umumiy soʻzgacha qisqartirilmaydi:
+    "account security smartphone" → "security" qulf va politsiya rasmlarini beradi."""
     words = query.split()
     out = [" ".join(words)] if words else []
     if len(words) > 2:
-        out += [" ".join(words[:2]), " ".join(words[-2:])]
-    if len(words) > 1:
-        out.append(words[-1])
+        out.append(" ".join(words[-2:]))
     return list(dict.fromkeys(out))
+
+
+def _tokens(text: str) -> set[str]:
+    return set(_WORD_RE.findall(text.lower()))
+
+
+def _word_match(q: str, t: str) -> bool:
+    """Bir soʻz shakllari: car ~ cars, server ~ servers, launch ~ launches (human ≠ humanoid)."""
+    if q == t or q.rstrip("s") == t.rstrip("s"):
+        return True
+    short, long_ = sorted((q, t), key=len)
+    return len(short) >= 5 and long_.startswith(short) and len(long_) - len(short) <= 2
+
+
+def topic_words(query: str) -> set[str]:
+    return _tokens(query) - GENERIC_WORDS
+
+
+def min_relevance(query: str) -> int:
+    """3+ muhim soʻzli soʻrovda kamida 2 tasi mos kelishi kerak, aks holda 1 tasi."""
+    return 2 if len(topic_words(query)) >= 3 else 1
 
 
 def _trusted(host: str) -> bool:
@@ -98,6 +127,7 @@ class Candidate:
     license: str
     license_url: str | None
     site: str = ""  # kreditdagi manba nomi (masalan, flickr)
+    text: str = ""  # sarlavha, teglar, tavsif — mavzuga moslikni tekshirish uchun
 
 
 @dataclass
@@ -115,6 +145,18 @@ class FoundImage:
             lic = f'<a href="{escape(c.license_url)}">{lic}</a>'
         site = SITE_NAMES.get(c.site or c.source, (c.site or c.source).title())
         return f"📷 {who} / {site}, {lic}"
+
+
+def relevance(cand: Candidate, query: str) -> int:
+    """Nechta muhim soʻrov soʻzi rasm tavsifida bor. Tavsif yoʻq: fotobank qidiruviga ishonamiz,
+    ochiq kolleksiyadagi tavsifsiz rasm — 0 (tekshirib boʻlmaydi)."""
+    words = topic_words(query)
+    if not words:
+        return 1
+    text = _tokens(cand.text)
+    if not text:
+        return len(words) if cand.source in STOCK_SOURCES else 0
+    return sum(1 for w in words if any(_word_match(w, t) for t in text))
 
 
 def _verify_image(data: bytes) -> bool:
@@ -142,13 +184,23 @@ class ImageSearch:
         self._sleep = sleep
         self._resolve = resolver
 
-    async def candidates(self, query: str) -> list[Candidate]:
-        """Pexels, Pixabay (kalit boʻlsa) → Openverse → Wikimedia, parallel; xato — shu manba boʻsh."""
-        sources = [self._openverse, self._wikimedia]
-        if self.pixabay_key:
-            sources.insert(0, self._pixabay)
-        if self.pexels_key:
-            sources.insert(0, self._pexels)
+    @property
+    def has_stock(self) -> bool:
+        return bool(self.pexels_key or self.pixabay_key)
+
+    async def candidates(self, query: str, *, stock: bool | None = None) -> list[Candidate]:
+        """Pexels, Pixabay (kalit boʻlsa) → Openverse → Wikimedia, parallel; xato — shu manba boʻsh.
+
+        `stock=True` — faqat fotobanklar, `False` — faqat ochiq kolleksiyalar, `None` — hammasi.
+        """
+        sources: list[Callable[[str], Awaitable[list[Candidate]]]] = []
+        if stock is not False:
+            if self.pexels_key:
+                sources.append(self._pexels)
+            if self.pixabay_key:
+                sources.append(self._pixabay)
+        if stock is not True:
+            sources += [self._openverse, self._wikimedia]
         results = await asyncio.gather(*(self._safe(fn, query) for fn in sources))
         return [cand for group in results for cand in group]
 
@@ -181,6 +233,7 @@ class ImageSearch:
                     license="Pixabay",
                     license_url=PIXABAY_LICENSE_URL,
                     site="pixabay",
+                    text=str(hit.get("tags") or ""),
                 )
             )
         return out
@@ -213,6 +266,7 @@ class ImageSearch:
                     page_url=str(photo.get("url") or "https://www.pexels.com"),
                     license="Pexels",
                     license_url=PEXELS_LICENSE_URL,
+                    text=str(photo.get("alt") or ""),
                 )
             )
         return out
@@ -226,6 +280,7 @@ class ImageSearch:
                 "license": ",".join(OPENVERSE_LICENSES),
                 "page_size": 20,
                 "mature": "false",
+                "category": "photograph",
                 "aspect_ratio": "wide,square",
                 "size": "large,medium",
             },
@@ -257,6 +312,10 @@ class ImageSearch:
                     license=lic,
                     license_url=item.get("license_url") or None,
                     site=str(item.get("source") or "openverse"),
+                    text=" ".join(
+                        [str(item.get("title") or "")]
+                        + [str(t.get("name") or "") for t in item.get("tags") or [] if isinstance(t, dict)]
+                    ),
                 )
             )
         return out
@@ -297,6 +356,12 @@ class ImageSearch:
                     page_url=str(info.get("descriptionurl") or "https://commons.wikimedia.org"),
                     license=lic,
                     license_url=(meta.get("LicenseUrl") or {}).get("value") or None,
+                    text=" ".join(
+                        [
+                            str(page.get("title") or "").removeprefix("File:").rsplit(".", 1)[0],
+                            html_to_text(str((meta.get("ImageDescription") or {}).get("value", "")))[:300],
+                        ]
+                    ),
                 )
             )
         return out
@@ -347,33 +412,61 @@ class ImageSearch:
 
     async def find(
         self,
-        query: str,
+        query: str | Sequence[str],
         *,
         fallback: str | None = None,
         exclude: Iterable[str] = (),
         accept: Callable[[bytes], Awaitable[bool]] | None = None,
     ) -> FoundImage | None:
-        """Birinchi mos rasm: soʻrov qisqartirilib, oxirida `fallback` (turkum) soʻrovi bilan qidiriladi."""
+        """Birinchi mos rasm. Tartib: fotobanklar (barcha soʻrovlar) → ochiq kolleksiyalar;
+        har soʻrov variantlari, oxirida `fallback` (turkum) soʻrovi. Mavzuga mos boʻlmagan rasm olinmaydi."""
+        queries = [query] if isinstance(query, str) else list(query)
+        plan: list[str] = []
+        for q in queries:
+            plan += query_variants(q)
+        if fallback:
+            plan.append(fallback)
+        plan = list(dict.fromkeys(q for q in plan if q.strip()))
         skip = set(exclude)
-        tried = 0
-        queries = query_variants(query) + ([fallback] if fallback else [])
-        for q in dict.fromkeys(queries):
-            fresh = [c for c in await self.candidates(q) if c.source_id not in skip]
-            batch = fresh[: min(PER_QUERY_DOWNLOADS, MAX_DOWNLOADS - tried)]
-            if not batch:
-                if tried >= MAX_DOWNLOADS:
+        state = {"tried": 0}
+        passes: list[bool] = [True, False] if self.has_stock else [False]
+        for stock in passes:
+            for q in plan:
+                if state["tried"] >= MAX_DOWNLOADS:
                     break
+                found = await self._try(q, stock, skip, state, accept)
+                if found is not None:
+                    return found
+        logger.info("Rasm topilmadi: «{}»", " | ".join(plan))
+        return None
+
+    async def _try(
+        self,
+        q: str,
+        stock: bool,
+        skip: set[str],
+        state: dict[str, int],
+        accept: Callable[[bytes], Awaitable[bool]] | None,
+    ) -> FoundImage | None:
+        cands = [c for c in await self.candidates(q, stock=stock) if c.source_id not in skip]
+        need = min_relevance(q)
+        scored = [(relevance(c, q), i, c) for i, c in enumerate(cands)]
+        # Mos kelmaganlar tashlanadi; koʻproq soʻz mos kelgani birinchi (teng boʻlsa — manba tartibi)
+        ranked = [c for r, _i, c in sorted(scored, key=lambda x: (-x[0], x[1])) if r >= need]
+        if len(ranked) < len(cands):
+            logger.debug("Rasm: «{}» — {} ta nomzod mavzuga mos emas", q, len(cands) - len(ranked))
+        batch = ranked[: min(PER_QUERY_DOWNLOADS, MAX_DOWNLOADS - state["tried"])]
+        if not batch:
+            return None
+        skip.update(c.source_id for c in batch)
+        state["tried"] += len(batch)
+        # Bir nechtasini parallel yuklab, birinchi muvofiqini (tartib boʻyicha) olamiz
+        datas = await asyncio.gather(*(self.download(c) for c in batch))
+        for cand, data in zip(batch, datas, strict=True):
+            if data is None:
                 continue
-            skip.update(c.source_id for c in batch)
-            tried += len(batch)
-            # Bir nechtasini parallel yuklab, birinchi muvofiqini (tartib boʻyicha) olamiz
-            datas = await asyncio.gather(*(self.download(c) for c in batch))
-            for cand, data in zip(batch, datas, strict=True):
-                if data is None:
-                    continue
-                if accept is not None and not await accept(data):
-                    continue
-                logger.info("Rasm topildi: «{}» → {} ({})", q, cand.source_id, cand.license)
-                return FoundImage(data=data, candidate=cand)
-        logger.info("Rasm topilmadi: «{}»", query)
+            if accept is not None and not await accept(data):
+                continue
+            logger.info("Rasm topildi: «{}» → {} ({})", q, cand.source_id, cand.license)
+            return FoundImage(data=data, candidate=cand)
         return None
