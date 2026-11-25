@@ -236,6 +236,24 @@ docker compose logs -f --tail=100 bot
 - **Backup:** har kuni 03:00 da barcha kolleksiyalar `data/backups/bot-…jsonl.gz` ga eksport qilinadi va 7 kun saqlanadi. Dushanba kunlari nusxa sizga Telegram orqali ham keladi. (Atlas bepul tarifida avtomatik backup yoʻq — shu eksport yordam beradi.)
 - **Yangilash:** `make deploy` (yoki `git pull && docker compose up -d --build`). Baza migratsiyalari avtomatik bajariladi.
 
+### 6.1. Oracle Cloud Always Free (bepul server)
+
+1. [cloud.oracle.com](https://cloud.oracle.com) → **Sign up** (karta faqat tasdiqlash uchun). Home region — yaqinrogʻi (masalan, Frankfurt).
+2. **Compute → Instances → Create instance**: Image — **Ubuntu 24.04**; Shape — **VM.Standard.A1.Flex** (Ampere, 1 OCPU / 6 GB)
+   yoki u band boʻlsa **VM.Standard.E2.1.Micro** (Always Free belgisi bor). **Add SSH keys → Generate** — ikkala kalitni yuklab oling.
+3. Instance → **Subnet → Default Security List → Add Ingress Rules**: Source `0.0.0.0/0`, TCP, port `80`; yana bittasi `443`.
+4. Ulanish: `ssh -i ssh-key.key ubuntu@<Public IP>`.
+5. Serverda:
+   ```bash
+   sudo apt update && sudo apt install -y git
+   git clone https://github.com/Anvar4/ai-post-telegrambot.git it-dunyosi-bot && cd it-dunyosi-bot
+   nano .env          # kompyuterdagi .env mazmunini joylashtiring (DRY_RUN=false — jonli kanal)
+   sudo bash deploy/install.sh
+   ```
+   Skript Docker, swap (RAM < 2 GB boʻlsa), 80/443 portlar (Oracle `iptables` ham), panel manzili va
+   `data` huquqlarini oʻzi sozlaydi. MongoDB Atlas → Network Access ga server IP sini qoʻshing.
+6. Render/Railway yoki kompyuterdagi botni oʻchiring — bir token bilan faqat bitta bot ishlasin.
+
 ---
 
 ## 7. Kundalik ishlatish
